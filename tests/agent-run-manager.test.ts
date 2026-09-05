@@ -64,6 +64,140 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 2_000): Pr
 }
 
 describe("AgentRunManager", () => {
+  test("a resumed writer cannot return old transcript text without a fresh assistant response", async () => {
+    const item = await setup("continuation-stale");
+    try {
+      execFileSync("git", ["init", "-q", item.project]);
+      const writerBinding = { planId: "portfolio", taskDigest: digestAgentRunText("portfolio") };
+      const request = { projectRoot: item.project, agent: { ...AGENT, id: "implementer", readOnly: false, model: "openai-codex/gpt-6-astra:high" }, systemPrompt: "Implement.", task: "Build.", runContext: { writerBinding } };
+      const first = await item.manager.runToResult(request);
+      expect(first.exitCode).toBe(0);
+      const result = await item.manager.runToResult({ ...request, task: "Repair.", runContext: { writerBinding, continuation: { runId: first.runId!, expectedWorkspaceSnapshot: first.continuation!.workspaceSnapshot } } });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.error).toContain("fresh assistant response");
+      expect(result.continuation).toBeUndefined();
+    } finally { await item.manager.shutdown(); await fs.rm(item.root, { recursive: true, force: true }); }
+  });
+  test("lifecycle changes fence late checkpoint issuance and continuation launches", async () => {
+    for (const phase of ["terminal", "launch"] as const) {
+      let release!: () => void;
+      let reached!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const paused = new Promise<void>((resolve) => { reached = resolve; });
+      let armed = phase === "terminal";
+      class PausingStore extends AgentRunStore {
+        override async save(paths: Parameters<AgentRunStore["save"]>[0], record: Parameters<AgentRunStore["save"]>[1]) {
+          if (armed && phase === "terminal" && record.status === "completed") { armed = false; reached(); await gate; }
+          return super.save(paths, record);
+        }
+        override async writeSystemPrompt(paths: Parameters<AgentRunStore["writeSystemPrompt"]>[0], prompt: string) {
+          if (armed && phase === "launch") { armed = false; reached(); await gate; }
+          return super.writeSystemPrompt(paths, prompt);
+        }
+      }
+      const item = await setup("continuation", 0, (root) => new PausingStore(root));
+      try {
+        execFileSync("git", ["init", "-q", item.project]);
+        const writerBinding = { planId: "portfolio", taskDigest: digestAgentRunText("portfolio") };
+        const request = { projectRoot: item.project, agent: { ...AGENT, id: "implementer", readOnly: false, model: "openai-codex/gpt-6-astra:high" }, systemPrompt: "Implement.", task: "Build.", runContext: { writerBinding } };
+        if (phase === "terminal") {
+          const started = await item.manager.start(request);
+          await paused;
+          const shuttingDown = item.manager.shutdown();
+          release();
+          await shuttingDown;
+          expect((await started.completion).continuation).toBeUndefined();
+        } else {
+          const first = await item.manager.runToResult(request);
+          armed = true;
+          const pending = item.manager.start({ ...request, task: "Repair.", runContext: { writerBinding, continuation: { runId: first.runId!, expectedWorkspaceSnapshot: first.continuation!.workspaceSnapshot } } });
+          const outcome = pending.then(() => "launched", (error: Error) => error.message);
+          await paused;
+          await item.manager.recover(item.project);
+          release();
+          expect(await outcome).toContain("lifecycle changed");
+        }
+      } finally { release(); await item.manager.shutdown(); await fs.rm(item.root, { recursive: true, force: true }); }
+    }
+  });
+  test("continues a closed writer in a fresh private session with only the new correction prompt", async () => {
+    const item = await setup("continuation");
+    try {
+      execFileSync("git", ["init", "-q", item.project]);
+      const writer = { ...AGENT, id: "implementer", readOnly: false, model: "openai-codex/gpt-6-astra:high" };
+      const writerBinding = { planId: "portfolio", taskDigest: digestAgentRunText("portfolio task") };
+      const request = { projectRoot: item.project, agent: writer, systemPrompt: "Implement the approved task.", task: "ORIGINAL_ASSIGNMENT", runContext: { writerBinding } };
+      const first = await item.manager.runToResult(request);
+      expect(first.exitCode).toBe(0);
+      expect(first.continuation?.runId).toBe(first.runId);
+      const before = (await item.manager.store.list(item.project)).find((record) => record.runId === first.runId)!;
+      const original = await fs.readFile(before.sessionFile!, "utf8");
+      const repaired = await item.manager.runToResult({ ...request, task: "CORRECTION_ONLY", runContext: { writerBinding, continuation: { runId: first.runId!, expectedWorkspaceSnapshot: first.continuation!.workspaceSnapshot } } });
+      expect(repaired.exitCode).toBe(0);
+      expect(repaired.runId).not.toBe(first.runId);
+      const restored = item.launchArgs()[item.launchArgs().indexOf("--session") + 1]!;
+      const text = await fs.readFile(restored, "utf8");
+      expect(text.match(/ORIGINAL_ASSIGNMENT/g)).toHaveLength(1);
+      expect(text.match(/CORRECTION_ONLY/g)).toHaveLength(1);
+      expect(JSON.parse(text.split("\n")[0]!).id).toBe(repaired.runId);
+      expect(await fs.readFile(before.sessionFile!, "utf8")).toBe(original);
+      await expect(item.manager.start({ ...request, runContext: { writerBinding, continuation: { runId: first.runId!, expectedWorkspaceSnapshot: first.continuation!.workspaceSnapshot } } })).rejects.toThrow("already consumed");
+    } finally { await item.manager.shutdown(); await fs.rm(item.root, { recursive: true, force: true }); }
+  });
+
+  test("writer continuation rejects changed task, model, tools, workspace, transcript, and read-only reuse", async () => {
+    for (const change of ["binding", "model", "tools", "workspace", "transcript", "corrupt", "symlink", "read-only", "recovery", "shutdown"] as const) {
+      const item = await setup("continuation");
+      try {
+        execFileSync("git", ["init", "-q", item.project]);
+        const writerBinding = { planId: "portfolio", taskDigest: digestAgentRunText("portfolio task") };
+        const writer = { ...AGENT, id: "implementer", readOnly: false, model: "openai-codex/gpt-6-astra:high" };
+        const request = { projectRoot: item.project, agent: writer, systemPrompt: "Implement.", task: "Build.", runContext: { writerBinding } };
+        const first = await item.manager.runToResult(request);
+        expect(first.continuation).toBeDefined();
+        if (change === "workspace") await fs.writeFile(path.join(item.project, "unexpected.txt"), "another writer");
+        if (change === "transcript") {
+          const record = (await item.manager.store.list(item.project)).find((record) => record.runId === first.runId)!;
+          await fs.appendFile(record.sessionFile!, `${JSON.stringify({ type: "message", unexpected: true })}\n`);
+        }
+        if (change === "corrupt" || change === "symlink") {
+          const record = (await item.manager.store.list(item.project)).find((record) => record.runId === first.runId)!;
+          if (change === "corrupt") await fs.writeFile(record.sessionFile!, "not JSON\n");
+          else {
+            const outside = path.join(item.root, "outside-session.jsonl");
+            await fs.copyFile(record.sessionFile!, outside);
+            await fs.unlink(record.sessionFile!);
+            await fs.symlink(outside, record.sessionFile!);
+          }
+        }
+        if (change === "recovery") await item.manager.recover(item.project);
+        if (change === "shutdown") await item.manager.shutdown();
+        await expect(item.manager.start({
+          ...request, task: "Repair.",
+          agent: { ...writer, ...(change === "model" ? { model: "openai-codex/gpt-5.6-luna:low" } : {}), ...(change === "tools" ? { allowBash: true } : {}), ...(change === "read-only" ? { readOnly: true } : {}) },
+          runContext: { writerBinding: { ...writerBinding, ...(change === "binding" ? { planId: "other" } : {}) }, continuation: { runId: first.runId!, expectedWorkspaceSnapshot: first.continuation!.workspaceSnapshot } },
+        })).rejects.toThrow();
+      } finally { await item.manager.shutdown(); await fs.rm(item.root, { recursive: true, force: true }); }
+    }
+  });
+
+  test("writer repair chains are bounded and checkpoints cannot be recovered by a new manager", async () => {
+    const item = await setup("continuation");
+    try {
+      execFileSync("git", ["init", "-q", item.project]);
+      const writerBinding = { planId: "portfolio", taskDigest: digestAgentRunText("portfolio task") };
+      const request = { projectRoot: item.project, agent: { ...AGENT, id: "implementer", readOnly: false, model: "openai-codex/gpt-6-astra:high" }, systemPrompt: "Implement.", task: "Build.", runContext: { writerBinding } };
+      let result = await item.manager.runToResult(request);
+      const other = new AgentRunManager();
+      await expect(other.start({ ...request, runContext: { writerBinding, continuation: { runId: result.runId!, expectedWorkspaceSnapshot: result.continuation!.workspaceSnapshot } } })).rejects.toThrow("previous parent session");
+      for (let turn = 0; turn < 3; turn++) {
+        expect(result.continuation).toBeDefined();
+        result = await item.manager.runToResult({ ...request, task: `Repair ${turn}`, runContext: { writerBinding, continuation: { runId: result.runId!, expectedWorkspaceSnapshot: result.continuation!.workspaceSnapshot } } });
+        expect(result.exitCode).toBe(0);
+      }
+      expect(result.continuation).toBeUndefined();
+    } finally { await item.manager.shutdown(); await fs.rm(item.root, { recursive: true, force: true }); }
+  });
   test("returns correlated native verification receipts and rejects changed or unmatched evidence", async () => {
     for (const mode of ["check-valid", "check-tampered", "check-unmatched"]) {
       const item = await setup(mode);

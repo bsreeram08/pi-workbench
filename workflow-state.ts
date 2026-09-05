@@ -13,6 +13,25 @@ import {
 export type WorkflowPlanStatus = "draft" | "approved" | "executing" | "verified" | "blocked" | "cancelled" | "interrupted";
 export type WorkflowVerificationMode = "packet";
 
+export interface WorkflowReviewAttempt {
+  status: "running" | "passed" | "rejected" | "interrupted" | "cancelled";
+  planDigest: string;
+  snapshot?: string;
+  policyDigest?: string;
+  inputDigest?: string;
+  recoveryAttempts: number;
+  model?: string;
+  error?: string;
+}
+
+export interface WorkflowDesignBrief {
+  direction: string;
+  hierarchy: string;
+  interactions: string;
+  responsiveAccessibility: string;
+  constraints: string;
+}
+
 export interface WorkflowExecutionState {
   startedAt: string;
   completedAt?: string;
@@ -20,6 +39,7 @@ export interface WorkflowExecutionState {
   verificationPassed: boolean;
   summary?: string;
   packetVerification?: WorkflowPacketVerification;
+  review?: WorkflowReviewAttempt;
 }
 
 export interface WorkflowPlanState {
@@ -36,6 +56,8 @@ export interface WorkflowPlanState {
   verificationMode?: WorkflowVerificationMode;
   packet?: WorkflowTaskPacket;
   execution?: WorkflowExecutionState;
+  planningReview?: WorkflowReviewAttempt;
+  designBrief?: WorkflowDesignBrief;
 }
 
 export interface WorkflowPaths {
@@ -123,7 +145,8 @@ function expectedPlanPath(paths: WorkflowPaths, id: string): string {
 }
 
 function validExecution(value: unknown, packet: WorkflowTaskPacket | undefined): value is WorkflowExecutionState {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["startedAt", "completedAt", "attempts", "verificationPassed", "summary", "packetVerification"])) return false;
+  if (!isRecord(value) || !hasOnlyKeys(value, ["startedAt", "completedAt", "attempts", "verificationPassed", "summary", "packetVerification", "review"])) return false;
+  if (value.review !== undefined && !validReviewAttempt(value.review)) return false;
   if (!isIso(value.startedAt)
     || (value.completedAt !== undefined && (!isIso(value.completedAt) || Date.parse(value.completedAt) < Date.parse(value.startedAt)))
     || !isFiniteInteger(value.attempts)
@@ -133,9 +156,21 @@ function validExecution(value: unknown, packet: WorkflowTaskPacket | undefined):
   return packet !== undefined && validateWorkflowPacketVerification(value.packetVerification, packet);
 }
 
+function validReviewAttempt(value: unknown): value is WorkflowReviewAttempt {
+  return isRecord(value) && hasOnlyKeys(value, ["status", "planDigest", "snapshot", "policyDigest", "inputDigest", "recoveryAttempts", "model", "error"])
+    && ["running", "passed", "rejected", "interrupted", "cancelled"].includes(value.status as string)
+    && typeof value.planDigest === "string" && /^(sha256:)?[a-f0-9]{64}$/.test(value.planDigest)
+    && (value.snapshot === undefined || typeof value.snapshot === "string" && /^[a-f0-9]{64}$/.test(value.snapshot))
+    && (value.policyDigest === undefined || typeof value.policyDigest === "string" && /^[a-f0-9]{64}$/.test(value.policyDigest))
+    && (value.inputDigest === undefined || typeof value.inputDigest === "string" && /^[a-f0-9]{64}$/.test(value.inputDigest))
+    && isFiniteInteger(value.recoveryAttempts) && value.recoveryAttempts <= 1
+    && (value.model === undefined || typeof value.model === "string" && value.model.length <= 512)
+    && (value.error === undefined || typeof value.error === "string" && value.error.length <= 4000);
+}
+
 function validateState(value: unknown, paths: WorkflowPaths): value is WorkflowPlanState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "version", "id", "task", "status", "plan", "interviewNotes", "createdAt", "updatedAt", "reviewRounds", "planPath", "verificationMode", "packet", "execution",
+    "version", "id", "task", "status", "plan", "interviewNotes", "createdAt", "updatedAt", "reviewRounds", "planPath", "verificationMode", "packet", "execution", "planningReview", "designBrief",
   ])) return false;
   if (value.version !== 1 || typeof value.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value.id) || value.id.includes("..")) return false;
   if (typeof value.task !== "string" || !value.task.trim() || typeof value.plan !== "string" || !value.plan.trim()) return false;
@@ -148,6 +183,14 @@ function validateState(value: unknown, paths: WorkflowPaths): value is WorkflowP
   if (value.packet !== undefined && !validateWorkflowTaskPacket(value.packet, value.plan)) return false;
   const packet = value.packet as WorkflowTaskPacket | undefined;
   if (value.execution !== undefined && !validExecution(value.execution, packet)) return false;
+  if (value.planningReview !== undefined && !validReviewAttempt(value.planningReview)) return false;
+  if (value.designBrief !== undefined) {
+    const keys = ["direction", "hierarchy", "interactions", "responsiveAccessibility", "constraints"];
+    if (!isRecord(value.designBrief) || !hasOnlyKeys(value.designBrief, keys)
+      || !keys.every((key) => typeof (value.designBrief as Record<string, unknown>)[key] === "string"
+        && ((value.designBrief as Record<string, string>)[key]!).trim().length > 0
+        && ((value.designBrief as Record<string, string>)[key]!).length <= 4000)) return false;
+  }
 
   const status = value.status as WorkflowPlanStatus;
   const execution = value.execution as WorkflowExecutionState | undefined;

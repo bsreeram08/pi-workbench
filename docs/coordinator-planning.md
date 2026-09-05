@@ -4,9 +4,9 @@
 
 Main Pi submits a complete plan with a terminal task packet to `workbench_plan` using `action: "review"`. Native reviewers inspect it independently. Their findings return to Main Pi, which decides how to revise within the configured review limit. A passing review enables `action: "approve"`; your interactive confirmation approves that exact draft.
 
-`/start-work` confirms implementation and hands control to Main Pi too. It uses `workbench_execute` to assign bounded implementation with an explicit model, inspects actual changes and behavior, and directs corrections. `action: "verify"` runs independent code review and native verification, returning findings to Main Pi without automatic repair. `action: "complete"` records Main Pi's final assessment only when the passing native evidence still matches the workspace and workflow state. Models cannot supply their own completion ticket. Reload clears pending completion tickets, so avoid reloading between passing final checks and completion.
+`/start-work` confirms implementation and hands control to Main Pi too. It uses `workbench_execute` to assign bounded implementation with an explicit model, inspects actual changes and behavior, and directs corrections. `action: "verify"` runs independent code review and native verification, returning findings to Main Pi without automatic repair. `action: "complete"` records Main Pi's final assessment only when the passing native evidence still matches the workspace and workflow state. Models cannot supply their own completion ticket. Reload clears pending tickets. After inspecting source again, `action: "recover"` can run one fresh read-only verification of the unchanged workspace. It preserves the substantive review budget and never replays implementation.
 
-The required Coordinator assessment makes its reasoning reviewable; it is not mechanical proof that the model inspected well. Independent reviewers and observed checks remain separate gates. Reviewers use the configured focused/thorough count. An optional verify `model` selects code reviewers; the separate verification agent follows normal routing.
+The Coordinator must call `inspect` with relevant source paths and cite its native `evidenceIds` in `verify` and `complete`. These receipts record the bounded content returned to the parent session and become stale after changes or reload. The assessment records its decisions; neither receipt nor prose proves comprehension. Independent reviewers and observed checks remain separate gates. Reviewers use the configured focused/thorough count. An optional verify `model` selects code reviewers; the separate verification agent follows normal routing.
 
 The native approval ticket cannot be supplied in model output. Changing the saved draft invalidates it. Reloading the extension or changing sessions clears pending tickets and requires review again; already approved plans remain saved. Planning ownership is agent guidance, while review, confirmation, writer leases, and artifact checks are native controls.
 
@@ -33,7 +33,7 @@ Use this with `delegate_task`. For native plan review, supply the same `model` a
 
 The model must exist in the session's available registry. Unknown or unavailable models produce a clear error before launch. There is no model substitution, and the call does not change session or project routing defaults. Model suffixes accept `low`, `medium`, or `high`; omitted thinking defaults to `medium`. `effort` controls the work budget independently. In parallel batches, set `model` on each requested `tasks[]` entry; every explicit model is checked before any child starts.
 
-During an approved workflow, use `workbench_execute` with `action: "implement"`, `planId`, a bounded `task`, and `model: "openai-codex/gpt-6-astra:high"`. This path requires an explicit model choice and holds the writer lease. Each result returns to Main Pi for inspection. An override on one call does not rewrite later automatic lanes. `/start-work --pipeline` retains the automatic implementation/review/repair sequence for users who explicitly choose it.
+During an approved workflow, use `workbench_execute` with `action: "implement"`, `planId`, a bounded `task`, and `model: "openai-codex/gpt-6-astra:high"`. This path requires an explicit model choice or a matching task preference and holds the writer lease. Each result returns to Main Pi for inspection. An override on one call does not rewrite later automatic lanes. `/start-work --pipeline` retains the automatic implementation/review/repair sequence for users who explicitly choose it.
 
 ## Verify the behavior
 
@@ -45,3 +45,34 @@ During an approved workflow, use `workbench_execute` with `action: "implement"`,
 6. Run `/start-work` and request Astra for UI implementation. Main Pi should describe the slice, call `workbench_execute` with Astra, inspect the returned changes, and direct review. Completion requires native gates plus a separate Main Pi assessment; rejection must not silently launch another implementer.
 
 Automated coverage is in `tests/workflow-orchestration.test.ts`, `tests/routing.test.ts`, and `tests/workflow-activity.test.ts`. These tests establish control flow, model propagation, and UI lifecycle behavior; they do not establish that a particular model makes better design decisions.
+
+## Persist model preferences
+
+Main Pi records a scoped user request once using `workbench_model_policy`:
+
+```json
+{
+  "action": "set",
+  "planId": "<current-plan-id>",
+  "domain": "ui-ux",
+  "actions": ["plan-review", "implement", "repair", "review"],
+  "model": "openai-codex/gpt-6-astra:high",
+  "reason": "The user requested Astra for UI/UX reviews and updates."
+}
+```
+
+Later native planning and execution actions pass `domain: "ui-ux"`; omitting `model` resolves to the pin. Conflicting overrides fail and an unavailable pinned model never falls back. Main Pi uses `replace: true` only when the user changes that preference. Unrelated domains retain ordinary routing. Policy survives reload and is bound to the current task. This native Coordinator policy does not change standalone delegation or the explicitly selected automatic pipeline.
+
+## Inspect and decide
+
+Each implementation returns a host-authored handoff: assignment/run identity, requested and resolved route, exit classification, before/after workspace fingerprints, observed changed paths, optional scope anomalies, and separately labeled child claims. Changes are measured against the dirty pre-delegation baseline, including work a child commits. They are observations, not proof of authorship; failed collection is never reported as zero changes. Failed assignments retain a handoff for inspecting partial work.
+
+Call `workbench_execute` with `action: "inspect"`, `planId`, and relevant `paths`; `startLine` selects a later source excerpt. When only deletions remain, `changes: true` returns a native deletion inventory against the earliest retained task baseline. It labels the returned metadata and never claims to return deleted source; added or modified source cannot use this shortcut. Read the returned source, investigate behavior, and cite its receipt IDs in the final assessment. The host rejects unknown, foreign, or stale IDs. Independent reviewers and actual check receipts still decide the native gates. Repeated findings receive advisory text fingerprints; repetition asks Main Pi to reconsider its approach without claiming the finding is true or mechanically proving stagnation.
+
+For visual work, submit a compact `designBrief` with plan review: `direction`, `hierarchy`, `interactions`, `responsiveAccessibility`, and `constraints`. It is reviewed and approved with the plan. During execution, source evidence plus visual evidence is required. `action: "visual"` returns a validated PNG supplied through `artifactPath`, with a reported `route`, `viewport: {width, height}`, and optional interaction `observations`. Its receipt records native dimensions, digest, and registration snapshot. The image's provenance, route, viewport, and behavior remain caller reports: registration does not prove when or from which build it was captured. Inspect the actual image and use browser/test evidence for keyboard, reduced-motion, and fallback behavior. Repair a stale or incorrect capture before treating it as a product defect.
+
+## Recover or continue deliberately
+
+Use `workbench_plan recover` after a passing planning ticket was lost or a review was interrupted. Execution uses `workbench_execute recover` with fresh source/visual evidence and an assessment. Recovery runs fresh reviewers/checks against unchanged inputs, consumes one durable allowance, and cannot bypass a substantive rejection or cancellation. Malformed verdicts are diagnosed separately; they never become approval. Normal review counters and earlier artifacts remain intact. Status messages never resume a stopped run.
+
+A completed writer may return a native `continuation` checkpoint. For a bounded correction, send `action: "implement"`, `repair: true`, the new correction in `task`, and `continuation: {runId, expectedWorkspaceSnapshot}`. The runtime restores a private closed transcript into a fresh process/turn while the project writer lease is held. The original assignment is not replayed. Checkpoints are single-use, limited to three repair turns, and require matching task, plan, project, model, tools, runtime, and workspace. Reviewers use fresh independent sessions. Reload, changed workspace, cancelled/failed writers, or invalid transcripts require a fresh bounded writer; transcript continuation is deliberately limited to the current manager runtime.

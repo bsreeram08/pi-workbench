@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added bounded Coordinator recovery after interrupted reviews or lost passing tickets, exact task/domain model preferences, host-recorded implementation handoffs, current parent source/PNG inspection receipts, approved design briefs, advisory finding continuity, and closed writer transcript reuse for bounded repairs. Approval and completion remain native gates.
+
 - Main Pi owns default `/plan` decisions and synthesis through native `workbench_plan` status/review/approve tools. Independent findings return to the Coordinator, and approval is bound to the unchanged reviewed draft. The automatic sequence remains available as `/plan --pipeline` and through `/autopilot`.
 - Default `/start-work` returns implementation control to Main Pi through `workbench_execute`: explicit implementer model choice, bounded assignments, Coordinator inspection, independent review/checks, and separate completion bound to the unchanged verified workspace. `/start-work --pipeline` preserves the automatic sequence.
 - Added exact per-call `model` selection to one-shot and persistent delegation and native plan review, with availability checks and no silent substitution. Effort budgets remain independent of model selection.

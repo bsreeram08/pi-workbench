@@ -38,7 +38,7 @@ For an untrusted project, run `/trust` and restart Pi before launching children.
 
 The Main Pi model and child routing are separate settings. Seeing Main Pi use Astra while Codebase Explorer uses Terra can be expected. Inspect `/model-routing` for the child family and policy; changing them does not change Main Pi's model. See [Child model routing](../README.md#child-model-routing).
 
-If you explicitly requested Astra for a particular task, Main Pi should pass `model: "openai-codex/gpt-6-astra:high"` on that delegation or native review call. `workbench_execute` requires an explicit model for implementation. An unavailable exact model fails without substitution. A previous Astra review does not by itself change the model used for a later implementation call.
+If you explicitly requested Astra for a particular task, Main Pi should pass `model: "openai-codex/gpt-6-astra:high"` on that delegation or native review call. `workbench_execute` requires an explicit model or matching task preference for implementation. Use `workbench_model_policy` to record the requested domain and actions once, then pass that domain on related calls. An unavailable exact model fails without substitution. A standalone Astra review override does not change later calls; a recorded task preference does. Conflicting model choices fail until Main Pi explicitly records the user's replacement direction.
 
 ## Main Pi disappears during implementation
 
@@ -51,3 +51,9 @@ Reload while idle to load these tool changes. Reload does not transform a pipeli
 If the attempt says `No implementation was started`, resolve the launch error and retry `/plan`. Review the resulting plan and acceptance criteria before `/start-work`. If execution had already begun, inspect `/workflow-status` and the working tree first; Workbench does not automatically resume interrupted work.
 
 Use the disposable examples in [Testing the harness](testing-harness.md) to separate loader or receipt failures from problems in your actual project. If the issue remains, include the details listed in [Support](../SUPPORT.md).
+
+## Reload lost a passing review
+
+Inspect native status before launching anything. `workbench_plan` with `action: "recover"` reruns a passing or interrupted review of the same saved plan. For execution, call `inspect` again (and `visual` when a design brief requires it), then `workbench_execute recover` with the new evidence IDs and your assessment. One durable recovery is allowed; counters and previous artifacts are preserved. It cannot restore a stale ticket from JSON or bypass cancellation, substantive rejection, changed inputs, or recovery exhaustion. No implementation is replayed.
+
+If a writer continuation is unavailable after reload or a source change, inspect the partial/current work and assign a fresh bounded correction. Do not resend the original broad assignment automatically.
