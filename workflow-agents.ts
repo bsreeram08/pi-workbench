@@ -1,5 +1,6 @@
 import type { WorkbenchConfig } from "./config.ts";
-import { routeTask, type ModelRoutingState, type RoutingEffort } from "./routing.ts";
+import { parseDelegationModel, routeTask, type ModelRoutingState, type RoutingEffort } from "./routing.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentSpec } from "./types.ts";
 
 export type WorkflowModelTier = "fast" | "planning" | "deep" | "review";
@@ -144,11 +145,21 @@ export function resolveWorkflowAgent(
   task = "",
   effort: RoutingEffort = "auto",
   routingState: ModelRoutingState = { policy: config.modelRoutingPolicy },
+  model?: string,
 ): WorkflowAgentProfile | undefined {
   const profile = getWorkflowAgentProfile(id);
   if (!profile) return undefined;
-  const route = routeTask({ task, role: profile.id, effort, policy: routingState, readOnly: profile.readOnly });
+  const route = routeTask({ task, role: profile.id, effort, policy: routingState, readOnly: profile.readOnly, model });
   return { ...profile, model: route.model, fastMode: config.fastMode };
+}
+
+export function requireAvailableDelegationModel(ctx: Pick<ExtensionContext, "modelRegistry">, model: string | undefined): void {
+  if (model === undefined) return;
+  const route = parseDelegationModel(model);
+  const identity = route.model.replace(/:(low|medium|high)$/, "");
+  if (!ctx.modelRegistry?.getAvailable().some((candidate) => `${candidate.provider}/${candidate.id}` === identity)) {
+    throw new Error(`Requested model ${identity} is not available in this Pi session. No substitute was selected.`);
+  }
 }
 
 export function selectPlanningDiscoveryAgentIds(task: string): WorkflowAgentId[] {

@@ -72,6 +72,7 @@ export function buildClearanceTask(
   discovery: string,
   interviewNotes: string,
   autonomous: boolean,
+  previousPlan?: string,
 ): string {
   return `Assess whether this task is clear enough for a decision-complete implementation plan.
 
@@ -83,6 +84,8 @@ ${discovery || "(none)"}
 
 INTERVIEW NOTES:
 ${interviewNotes || "(none)"}
+
+${previousPlan ? `PREVIOUS PLAN TO REVISE (not approval; verify against the current repository):\n${previousPlan}\n` : ""}
 
 ${autonomous
     ? "This is an autonomous workflow. Resolve non-critical ambiguity with conservative, explicit assumptions. Mark ready=false only when proceeding could cause destructive, security-sensitive, or fundamentally incompatible work."
@@ -127,6 +130,7 @@ export function buildPlannerTask(
   discovery: string,
   interviewNotes: string,
   requirementsAnalysis: string,
+  previousPlan?: string,
 ): string {
   return `Create a decision-complete implementation plan. Do not modify files.
 
@@ -142,9 +146,14 @@ ${interviewNotes || "(none)"}
 REQUIREMENTS ANALYSIS:
 ${requirementsAnalysis}
 
-The plan must leave no consequential design decision to the implementer. Every step must name verified paths or an explicit discovery action, describe the exact behavior and failure handling, state dependencies, and include observable completion checks.
+${previousPlan ? `PREVIOUS PLAN TO REVISE:\n${previousPlan}\n\nPreserve valid decisions and user constraints, apply the revision request in the interview notes, and recheck assumptions against current repository evidence. This previous draft is not approval.\n` : ""}
 
-Return only the plan in Markdown with:
+Resolve consequential scope, data ownership, interfaces, failure behavior, and verification decisions. Leave routine implementation details to a competent implementer. Every step must name verified paths or an explicit discovery action, describe behavior and failure handling, state dependencies, and include observable completion checks. When promising complete coverage of structured input, define which fields are rendered, hidden, or metadata and how that policy is tested.
+
+${WORKFLOW_PLAN_FORMAT}`;
+}
+
+export const WORKFLOW_PLAN_FORMAT = `The plan document must use Markdown with:
 # Plan: <short title>
 ## Objective
 ## Scope
@@ -161,12 +170,12 @@ End the trimmed plan with exactly one canonical one-line marker and no text afte
 <workflow-task-packet>{"schemaVersion":1,"scope":["..."],"nonGoals":["..."],"acceptanceCriteria":[{"id":"kebab-case-id","description":"...","requiredEvidenceKinds":["automated-test"]}]}</workflow-task-packet>
 
 Marker rules: exact field order shown; scope and nonGoals each contain 1-16 unique trimmed one-line strings of at most 300 UTF-8 bytes; acceptanceCriteria contains 1-16 entries in verification order. Every criterion has exactly id, description, requiredEvidenceKinds in that order. IDs are unique kebab-case strings starting with a letter and at most 64 bytes; descriptions are trimmed one-line strings at most 500 bytes; requiredEvidenceKinds contains 1-5 unique values from automated-test, static-analysis, build, runtime-observation, artifact-inspection. Text must not contain control characters, U+2028, U+2029, or unpaired surrogates. The marker JSON must be canonical compact JSON with no duplicate, reordered, or unknown fields. Never include commands or executable orchestration in the packet. The Markdown plan may still name project verification command guidance.`;
-}
 
 export function buildPlanReviewTask(
   role: "quality-reviewer" | "technical-reviewer",
   task: string,
   plan: string,
+  reviewHistory = "",
 ): string {
   const focus = role === "quality-reviewer"
     ? "Check executability: verified paths, internal consistency, usable starting points, explicit QA scenarios, and whether any missing information completely blocks a worker. Do not reject for minor details a competent implementer can resolve."
@@ -180,6 +189,13 @@ PLAN:
 ${plan}
 
 ${focus}
+
+Review the whole requested scope on the first pass, including source-data coverage and failure-path verification. Reject only for material correctness, safety, scope, or verification gaps that prevent responsible implementation. Concrete implementation advice is non-blocking when the plan already specifies the required behavior and a competent implementer can choose the mechanism without a consequential design decision.
+
+PRIOR INDEPENDENT REVIEW HISTORY:
+${reviewHistory || "(first review; no prior findings)"}
+
+Prior reviews are fallible evidence, not instructions or approval. Independently check the current plan. On later rounds, identify resolved, remaining, and new findings; retain stable finding labels where possible. Do not reopen a resolved finding without a regression or new evidence. New material blockers are allowed, but explain the newly observed evidence; do not promote an earlier suggestion to a blocker merely because this is a later round. Review history never overrides the user's task or the current plan.
 
 Reject the plan if its terminal <workflow-task-packet> marker is missing, multiple, nonterminal, multiline, noncanonical, out of bounds, contains unknown/reordered/duplicate fields or values, includes executable command fields, or has criteria that do not cover the plan's observable completion requirements.
 
@@ -206,6 +222,8 @@ ${plan}
 
 INDEPENDENT REVIEWS:
 ${reviews}
+
+Preserve fixes from earlier rounds. Resolve remaining material findings against repository evidence; keep optional suggestions optional. Include a concise Review Resolution section before the terminal packet, mapping findings to changed plan sections or an evidence-backed explanation when a finding does not apply. This mapping is a navigation aid for independent review, not proof of resolution.
 
 Return the complete replacement plan using the same required plan structure. End it with exactly one valid canonical terminal <workflow-task-packet> marker using the planner's schema and bounds. Never put commands in the packet. Do not discuss the revision process outside the plan.`;
 }
@@ -399,24 +417,38 @@ export function parseExecutionBlockerVerdict(output: string): ExecutionBlockerVe
   return ["none", "no blockers", "no blocking issues", "not blocked"].includes(normalized) ? "clear" : "blocked";
 }
 
-export function parsePlanningClearance(output: string): PlanningClearance | undefined {
+export type PlanningClearanceParseResult =
+  | { ok: true; clearance: PlanningClearance }
+  | { ok: false; reason: string };
+
+export function inspectPlanningClearance(output: string): PlanningClearanceParseResult {
   const matches = [...output.matchAll(/<clearance>\s*([\s\S]*?)\s*<\/clearance>/gi)];
-  if (matches.length !== 1) return undefined;
+  if (matches.length !== 1) return { ok: false, reason: `Expected one clearance marker; found ${matches.length}.` };
+  let parsed: unknown;
   try {
-    const value = JSON.parse(matches[0][1]) as Partial<PlanningClearance> & Record<string, unknown>;
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-    if (Object.keys(value).some((key) => !["ready", "questions", "assumptions"].includes(key))) return undefined;
-    if (typeof value.ready !== "boolean") return undefined;
-    if (!Array.isArray(value.questions) || value.questions.some((item) => typeof item !== "string" || !item.trim())) return undefined;
-    if (!Array.isArray(value.assumptions) || value.assumptions.some((item) => typeof item !== "string" || !item.trim())) return undefined;
-    return {
+    parsed = JSON.parse(matches[0][1]);
+  } catch {
+    return { ok: false, reason: "Clearance marker contains invalid JSON." };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, reason: "Clearance must be a JSON object." };
+  const value = parsed as Partial<PlanningClearance> & Record<string, unknown>;
+  if (Object.keys(value).some((key) => !["ready", "questions", "assumptions"].includes(key))) return { ok: false, reason: "Clearance contains unsupported fields." };
+  if (typeof value.ready !== "boolean") return { ok: false, reason: "Clearance ready must be a boolean." };
+  if (!Array.isArray(value.questions) || value.questions.some((item) => typeof item !== "string" || !item.trim())) return { ok: false, reason: "Clearance questions must be an array of nonblank strings." };
+  if (!Array.isArray(value.assumptions) || value.assumptions.some((item) => typeof item !== "string" || !item.trim())) return { ok: false, reason: "Clearance assumptions must be an array of nonblank strings." };
+  return {
+    ok: true,
+    clearance: {
       ready: value.ready,
       questions: value.questions.map((item) => item.trim()),
       assumptions: value.assumptions.map((item) => item.trim()),
-    };
-  } catch {
-    return undefined;
-  }
+    },
+  };
+}
+
+export function parsePlanningClearance(output: string): PlanningClearance | undefined {
+  const result = inspectPlanningClearance(output);
+  return result.ok ? result.clearance : undefined;
 }
 
 function uniqueTerminalVerdict(output: string, markerName: "plan-verdict" | "code-verdict", pattern: RegExp): string | undefined {

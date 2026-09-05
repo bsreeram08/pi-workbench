@@ -38,6 +38,14 @@ For an untrusted project, run `/trust` and restart Pi before launching children.
 
 The Main Pi model and child routing are separate settings. Seeing Main Pi use Astra while Codebase Explorer uses Terra can be expected. Inspect `/model-routing` for the child family and policy; changing them does not change Main Pi's model. See [Child model routing](../README.md#child-model-routing).
 
+If you explicitly requested Astra for a particular task, Main Pi should pass `model: "openai-codex/gpt-6-astra:high"` on that delegation or native review call. `workbench_execute` requires an explicit model for implementation. An unavailable exact model fails without substitution. A previous Astra review does not by itself change the model used for a later implementation call.
+
+## Main Pi disappears during implementation
+
+Default `/plan` and `/start-work` now hand control to Main Pi. It chooses bounded assignments and models, inspects actual changes, and resolves independent findings. Native `workbench_plan` and `workbench_execute` retain approval and verification gates. The automatic sequence remains available through explicit `--pipeline` commands and `/autopilot`.
+
+Reload while idle to load these tool changes. Reload does not transform a pipeline already running or resume an interrupted execution. Inspect `/workflow-status` before starting anything new. During active Coordinator work, the activity row shows the phase and elapsed time; each child result should return to Main Pi for assessment. See [Coordinator planning and execution](coordinator-planning.md) for examples and tests.
+
 ## Retrying after an interrupted plan
 
 If the attempt says `No implementation was started`, resolve the launch error and retry `/plan`. Review the resulting plan and acceptance criteria before `/start-work`. If execution had already begun, inspect `/workflow-status` and the working tree first; Workbench does not automatically resume interrupted work.

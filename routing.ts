@@ -35,6 +35,7 @@ export interface RoutingRequest {
   policy?: ModelRoutingState;
   readOnly?: boolean;
   visual?: boolean;
+  model?: string;
 }
 
 export interface ModelRoute {
@@ -186,6 +187,13 @@ export function parseFixedRoutingModel(value: string): FixedModelRoute | undefin
   return { model: `${match[1]}/${match[2]}:${thinking}`, thinking };
 }
 
+export function parseDelegationModel(value: string): FixedModelRoute {
+  const match = value.trim().match(/^([A-Za-z0-9_-]+)\/([A-Za-z0-9][A-Za-z0-9._/-]*)(?::(low|medium|high))?$/);
+  if (!match) throw new Error("Use an exact provider/model[:low|medium|high] for a delegation model override.");
+  const thinking = (match[3] ?? "medium") as RoutingThinking;
+  return { model: `${match[1]}/${match[2]}:${thinking}`, thinking };
+}
+
 export function routeTask(request: RoutingRequest): ModelRoute {
   const classified = classifyRoutingEffort(request.task, request.role);
   let effort = request.effort && request.effort !== "auto" ? request.effort : classified.effort;
@@ -194,11 +202,12 @@ export function routeTask(request: RoutingRequest): ModelRoute {
   const policyName = policy.policy === "fixed" && policy.fixed ? "fixed" : policy.policy === "fixed" ? "balanced" : policy.policy;
   const family = routingFamily(policy);
   const table = family === "grok" ? GROK_POLICY_ROUTES : POLICY_ROUTES;
-  let selected = policyName === "fixed"
+  let selected = request.model !== undefined ? parseDelegationModel(request.model) : policyName === "fixed"
     ? policy.fixed!
     : table[policyName][effort];
 
   if (visual && /codex-spark/i.test(selected.model)) {
+    if (request.model !== undefined) throw new Error("The requested Spark model is not allowed for visual work; choose another exact model. No substitution was made.");
     selected = BALANCED_ROUTES.standard;
     if (effort === "light") effort = "standard";
   }
@@ -213,7 +222,7 @@ export function routeTask(request: RoutingRequest): ModelRoute {
     : dimensions.length
       ? `${dimensions.join(" + ")} signals`
       : "bounded low-risk task";
-  const reason = policyName === "fixed"
+  const reason = request.model !== undefined ? `explicit per-delegation model; ${basis}` : policyName === "fixed"
     ? `fixed session override; ${basis}`
     : `${family === "grok" ? "grok " : ""}${policyName} policy; ${basis}${visual ? "; visual work avoids Spark" : ""}`;
 
@@ -221,7 +230,7 @@ export function routeTask(request: RoutingRequest): ModelRoute {
     effort,
     model: selected.model,
     thinking: selected.thinking,
-    policy: policyName,
+    policy: request.model !== undefined ? "fixed" : policyName,
     reason,
     budget: request.readOnly ? READ_ONLY_BUDGETS[effort] : undefined,
     signals: classified.signals,

@@ -8,7 +8,7 @@ import { MODEL_ROUTING_RECEIPT_ENTRY } from "./model-routing.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { formatRoutingReceipt, routeTask, type ModelRoutingState, type RoutingEffort } from "./routing.ts";
 import { AgentRunManager } from "./agent-run-manager.ts";
-import { getWorkflowAgentProfile, resolveWorkflowAgent, WORKFLOW_AGENT_IDS, type WorkflowAgentId } from "./workflow-agents.ts";
+import { getWorkflowAgentProfile, requireAvailableDelegationModel, resolveWorkflowAgent, WORKFLOW_AGENT_IDS, type WorkflowAgentId } from "./workflow-agents.ts";
 
 export interface RegisterAgentRuntimeToolsOptions {
   readonly manager: AgentRunManager;
@@ -51,11 +51,13 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
       "Use workbench_agent_start when a read-only specialist should remain independently steerable or may need to ask the parent a question; use delegate_task for ordinary run-to-result delegation.",
       "Inside cmux, Workbench agent runs are real interactive Pi TUI sessions controlled through a private authenticated bridge; focus the tab to chat directly. Outside cmux, the first-party headless RPC executor remains available for compatibility.",
       "Persistent starts are read-only, including Bash-capable specialists that need shell verification. Persistent mutation-capable agents remain deferred.",
+      "Honor an explicit model request with model=provider/model[:thinking]; no silent fallback. Effort independently controls the work budget.",
     ],
     parameters: Type.Object({
       agent: AgentSchema,
       task: Type.String({ minLength: 1, maxLength: 100_000, description: "Focused task and observable success criteria" }),
       effort: Type.Optional(EffortSchema),
+      model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] override, e.g. openai-codex/gpt-6-astra:high" })),
       allowQuestions: Type.Optional(Type.Boolean({ default: true, description: "Allow at most one child ask_parent question for the run" })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -69,11 +71,12 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
           details: { blocked: true, reason: "project-trust-required" },
         };
       }
+      requireAvailableDelegationModel(ctx, params.model);
       const root = await findProjectRoot(ctx.cwd, exec);
       const config = await loadConfig(getProjectPaths(root));
       const effort = (params.effort ?? "auto") as RoutingEffort;
-      const route = routeTask({ task: params.task, role: base.id, effort, policy: getRoutingState(), readOnly: true });
-      const agent = resolveWorkflowAgent(base.id, config, params.task, effort, getRoutingState());
+      const route = routeTask({ task: params.task, role: base.id, effort, policy: getRoutingState(), readOnly: true, model: params.model });
+      const agent = resolveWorkflowAgent(base.id, config, params.task, effort, getRoutingState(), params.model);
       if (!agent) throw new Error(`Could not resolve Workbench agent: ${params.agent}`);
       pi.appendEntry(MODEL_ROUTING_RECEIPT_ENTRY, { content: formatRoutingReceipt(agent.title, route) });
       if (signal?.aborted) throw new Error("Workbench agent start was cancelled before launch.");

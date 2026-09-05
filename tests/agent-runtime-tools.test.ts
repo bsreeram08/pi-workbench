@@ -97,6 +97,16 @@ describe("first-party agent runtime tool surface", () => {
       task: "Inspect the repository map.",
     });
     expect(result.details.runId).toBe("agent-codebase-explorer-1");
+    await start.execute("astra", { agent: "codebase-explorer", task: "Inspect UI", model: "openai-codex/gpt-6-astra:high" }, undefined, undefined, {
+      cwd: "/project", hasUI: true, isProjectTrusted: () => true, ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-6-astra" }] },
+    });
+    expect(started.agent.model).toBe("openai-codex/gpt-6-astra:high");
+    started = undefined;
+    await expect(start.execute("missing", { agent: "codebase-explorer", task: "Inspect UI", model: "openai-codex/missing" }, undefined, undefined, {
+      cwd: "/project", hasUI: true, isProjectTrusted: () => true, ui: { notify() {} }, modelRegistry: { getAvailable: () => [] },
+    })).rejects.toThrow("No substitute");
+    expect(started).toBeUndefined();
   });
 
   test("keeps the legacy launcher seam as a facade over the shared manager", async () => {

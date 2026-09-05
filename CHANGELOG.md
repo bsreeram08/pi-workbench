@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Main Pi owns default `/plan` decisions and synthesis through native `workbench_plan` status/review/approve tools. Independent findings return to the Coordinator, and approval is bound to the unchanged reviewed draft. The automatic sequence remains available as `/plan --pipeline` and through `/autopilot`.
+- Default `/start-work` returns implementation control to Main Pi through `workbench_execute`: explicit implementer model choice, bounded assignments, Coordinator inspection, independent review/checks, and separate completion bound to the unchanged verified workspace. `/start-work --pipeline` preserves the automatic sequence.
+- Added exact per-call `model` selection to one-shot and persistent delegation and native plan review, with availability checks and no silent substitution. Effort budgets remain independent of model selection.
+- Added a native animated workflow activity row with phase and elapsed time, cleanup on completion, and pauses for planning input.
+
+- Added `/plan --revise [feedback]` and the `revise plan` shorthand to preserve the current task, draft, and interview decisions before implementation. Failed revision discovery or clearance retains the draft. Later review rounds receive prior independent findings, and each reviewed draft is saved beside its review. Clearance failures report the validation reason and output artifact; blocked planning keeps a blocked lifecycle status.
 - Added child-context and workflow troubleshooting guides, including update-marker recovery boundaries and optional skill limits. Expanded manual testing with an aviation-themed 3D resume task, clarified non-Git verification scope, and labeled the runtime roadmap's historical baseline.
 
 - Fixed planning interruption on valid design skills above the repository-instruction size limit. Optional skills have separate per-file and aggregate budgets and are omitted with a reason if unavailable; mandatory repository instructions retain their strict checks.

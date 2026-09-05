@@ -30,6 +30,15 @@ import {
 } from "../routing.ts";
 
 describe("adaptive model routing", () => {
+  test("an exact delegation model wins over session routing without changing the effort budget", () => {
+    const route = routeTask({ task: "Review the UI design", model: "openai-codex/gpt-6-astra:high", effort: "light", readOnly: true,
+      policy: { policy: "fixed", fixed: BALANCED_ROUTES.standard } });
+    expect(route.model).toBe("openai-codex/gpt-6-astra:high");
+    expect(route.budget).toEqual(READ_ONLY_BUDGETS.light);
+    expect(route.reason).toContain("explicit per-delegation");
+    expect(() => routeTask({ task: "Review UI", model: "astra" })).toThrow("exact provider/model");
+    expect(() => routeTask({ task: "Review UI", model: "openai-codex/gpt-5.3-codex-spark" })).toThrow("No substitution");
+  });
   test("promotes a hard scout lane to Sol while keeping a bounded scout lane light", () => {
     const light = routeTask({ task: "Find the definition of loadConfig.", role: "scout", readOnly: true });
     const heavy = routeTask({

@@ -4,6 +4,8 @@ For commands and expected outcomes, see [Test the harness improvements](testing-
 
 The process tests prove properties of the harness. They do not establish that a model produces better finished work with it. Do not label fixture success rates as agent-quality improvements.
 
+Default planning and execution now return decisions to Main Pi through native tools. Compare this Coordinator flow against explicit `/plan --pipeline` and `/start-work --pipeline` on the same tasks. Current regressions check exact model propagation, return of reviewer findings without automatic repair, and rejection of completion after workspace changes. A required Coordinator assessment records reasoning; evaluate whether it actually identifies defects and improves the finished result in live trials.
+
 Compare four configurations on the same task snapshots: Main Pi alone; Main Pi with relevant context; focused Workbench; thorough Workbench. Fix the model, reasoning level, time/tool budget, repository starting point, and installed skill revisions. Run each task more than once and rotate configuration order. Keep evaluator tests outside the writer's editable checkout.
 
 Use real completed tasks with known expected behavior: a regression with a reproducer, an API change with error cases, a UI interaction with visual/keyboard checks, a cross-file refactor, and a research question with primary-source support. Include dirty starting trees and interruption/recovery cases. Expand the set with actual failures; reserve unseen tasks for final comparison.

@@ -94,14 +94,21 @@ Backups: `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/backups/pi-workbench/<timestam
 
 ## Start a coding task
 
-Run `/plan <task>`, review the acceptance criteria, then `/start-work`. The default focused execution is:
+Run `/plan <task>`, review the acceptance criteria, then `/start-work`. Main Pi stays responsible throughout:
 
 ```text
-Approved plan → implementer → independent technical reviewer → verifier
-                              ↑         repair loop         ↓
+Main Pi decides → bounded implementer → Main Pi inspects
+        ↑                                     ↓
+        └── findings ← independent review + native checks
+                                              ↓
+                                  Main Pi assesses and completes
 ```
 
-Planning includes discovery and independent plan review. Execution uses one writer by default; parallel candidates are opt-in. Set `"workflowMode": "thorough"` in `.pi/pi-workbench/config.json` for a separate requirements analyst, execution manager, and dual reviews. Both modes retain approval, writer ownership, bounded repair loops, and recorded verification.
+Main Pi now owns planning: it inspects the project, makes consequential decisions, delegates bounded advice when useful, and submits its plan through `workbench_plan`. Native independent review returns findings to Main Pi for revision; approval requires your confirmation of the unchanged reviewed draft. `/plan --pipeline <task>` retains the automatic planning sequence; `/autopilot` also uses that sequence. Execution uses one writer by default; parallel candidates are opt-in. `"workflowMode": "thorough"` enables dual plan reviews and the longer execution sequence. Both modes retain approval, writer ownership, bounded repair loops, and recorded verification. See [Coordinator planning and model selection](docs/coordinator-planning.md).
+
+Default `/start-work` also returns control to Main Pi. It selects an explicit model for each bounded implementation task, inspects changes, resolves reviewer findings, and makes the final assessment through `workbench_execute`. Native completion requires passing independent review/checks and an unchanged workspace. `/start-work --pipeline` retains automatic implementation and repair; `/autopilot` remains the automatic end-to-end option.
+
+If a plan is blocked before implementation, use `/plan --revise <feedback>` to carry forward its original task, draft, and interview decisions. `/plan revise plan` is a shorthand for revising the current plan. Revision starts a new attempt with fresh discovery, independent review, and approval; it does not resume implementation. A new `/plan <task>` starts from that new request. Later review rounds receive prior independent findings and must distinguish resolved, remaining, and new issues; material new blockers can still stop the plan at the configured limit.
 
 After the run, `/workflow-status` shows the state and evidence paths. Inspect `checks-N.md` and the criterion assessment, and run the relevant tests yourself. For a copyable scratch-project example and expected success, failure, and timeout results, see [Testing the harness](docs/testing-harness.md).
 
@@ -116,7 +123,10 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/goals-set <objective>` | Create or replace the goal. The agent does not create goals |
 | `/goals-clear` | Remove the goal file |
 | `/plan [task]` | Clarify, plan, and independently review acceptance criteria |
+| `/plan --pipeline [task]` | Use the automatic discovery/planner/reviewer sequence |
+| `/plan --revise [feedback]` | Replan from the current task and draft before implementation starts |
 | `/start-work` | Implement, independently review, repair, and verify the approved plan |
+| `/start-work --pipeline` | Run automatic implementation, review, and repair stages |
 | `/autopilot [task]` | Plan, implement, review, and verify in one run |
 | `/automode [on\|off\|status]` | Keep this Coordinator session moving with conservative defaults |
 | `/workflow-status` | Current plan state and evidence paths |
@@ -147,6 +157,8 @@ Prefer these over leftover third-party names:
 - `delegate_task` — one-shot specialist work. Read-only specialists may use Bash for inspection; writers go through the single-writer lease.
 - `workbench_agent_start` / `_message` / `_status` / `_answer` / `_cancel` / `_focus` — persistent read-only agents. Inside cmux they are unfocused Pi TUI tabs (`Ctrl+Alt+A` focuses the dashboard).
 - `workbench_verify` — run a verification command and retain a native process receipt.
+- `workbench_plan` — inspect state, review a Coordinator-authored plan, or request approval of the exact reviewed draft.
+- `workbench_execute` — bounded implementation with an explicit model, independent review/checks, and a separate Coordinator completion decision.
 - `workbench_todo` — session task list (`/todos`).
 - `workbench_ask` — up to four structured questions when a real decision is required.
 - `workbench_goal` — get/complete/pause/resume. Create with `/goals-set`.
@@ -160,9 +172,13 @@ Do not start new work with the external `subagent` tool or `workflowScript`.
 
 The footer shows Supervisor and child phase cards. `Ctrl+Alt+A` toggles the dashboard, arrows navigate, `Enter` opens an overlay, `Escape` returns to the editor. Overlay input steers a running child, or answers `waiting_for_parent`. Interactive Pi TUI tabs stay immediate; they are not process-paused.
 
+An animated activity row above the editor shows the current workflow phase and elapsed time, including while the parent waits for delegated work. It clears when work ends and pauses for planning input.
+
 ## Child model routing
 
 Shipped default family is Codex: light Luna/low, standard Terra/medium, heavy Sol/high. `/model-routing grok` is session-only; `/model-routing grok --default` writes the project family. Main Pi does not change unless launched with `--model`.
+
+For a specific child, Main Pi can set `model: "openai-codex/gpt-6-astra:high"` on `delegate_task`, `workbench_agent_start`, or `workbench_plan` review. This overrides routing for that call only. Parallel delegation takes a model on each `tasks[]` entry. An unavailable model fails before launch without substitution; `effort` still controls the task budget separately.
 
 `--default` writes `.pi/pi-workbench/config.json` at the **git project root**. Natural-language directives such as `use grok routing this session` keep the other axis (family vs policy).
 

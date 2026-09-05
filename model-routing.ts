@@ -225,13 +225,14 @@ function stateDescription(state: ModelRoutingState): string {
 
 function nativeRoutingGuidance(state: ModelRoutingState): string {
   const fixed = state.policy === "fixed" && state.fixed
-    ? ` Fixed mode is active: use ${state.fixed.model} with ${state.fixed.thinking} thinking as every workflow default unless the user explicitly changes the session route. Main Pi keeps its current model; fixed mode changes delegated children only.`
+    ? ` Fixed mode is active: use ${state.fixed.model} with ${state.fixed.thinking} thinking as every workflow default unless a delegation explicitly selects another model. Main Pi keeps its current model; fixed mode changes delegated children only.`
     : "";
   const family = routingFamily(state);
   const routes = family === "grok" ? GROK_BALANCED_ROUTES : BALANCED_ROUTES;
-  const familyNote = family === "grok"
+  const overrideNote = " Honor explicit per-task model requests using the model parameter on delegate_task, workbench_agent_start, or workbench_plan review: for example openai-codex/gpt-6-astra:high. This overrides session defaults for the call only; unavailable exact models fail without substitution. Effort controls the budget separately.";
+  const familyNote = overrideNote + (family === "grok"
     ? " Grok 4.6 family is active for delegated children. `/model-routing grok` is session-only; `/model-routing grok --default` writes the durable project family. Main Pi keeps its current model unless launched with --model."
-    : " Codex family is the shipped default. `/model-routing grok` switches children for this session; `/model-routing grok --default` persists Grok 4.6 for new sessions.";
+    : " Codex family is the shipped default. `/model-routing grok` switches children for this session; `/model-routing grok --default` persists Grok 4.6 for new sessions.");
   return `Adaptive delegation routing: prefer first-party delegate_task for ordinary specialist work and workbench_agent_start when a persistent read-only agent must remain steerable or may ask the parent a question. Classify each lane independently from complexity, uncertainty, risk, breadth, and verification cost; role is only a prior. Balanced routes are light=${routes.light.model}, standard=${routes.standard.model}, heavy=${routes.heavy.model}. A hard scout/recon lane can and should reach Sol or Grok 4.6 high; never use Spark for image/visual work. Before launch, show one compact line with role, model/thinking, reason, and read-only budget. Read-only limits are 8 turns/30 tools (light), 16/60 (standard), or 30/120 (heavy), with stop-and-synthesize guidance. Persistent mutation-capable agents are not enabled; use the existing single-writer delegate_task path under its lease. Do not use the external subagent tool or workflowScript; first-party Workbench agents are the runtime.${familyNote}${fixed}`;
 }
 
