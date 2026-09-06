@@ -10,8 +10,8 @@ const sessionDir = valueAfter("--session-dir");
 const fakeMode = valueAfter("--fake-mode") ?? "complete";
 const delayMs = Number(valueAfter("--fake-delay") ?? "0");
 const envOutput = valueAfter("--env-output");
-const sessionFile = path.join(sessionDir, "fake-session.jsonl");
-const sessionId = "fake-session-id";
+const sessionFile = valueAfter("--session") ?? path.join(sessionDir, "fake-session.jsonl");
+const sessionId = valueAfter("--session") ? JSON.parse(fs.readFileSync(sessionFile, "utf8").split("\n")[0]).id : "fake-session-id";
 let buffer = "";
 let prompt = "";
 let waiting = false;
@@ -34,6 +34,8 @@ emit({
     version: 1,
     runId: process.env.PI_WORKBENCH_RUN_ID,
     activeTools: fakeMode === "loadout-mismatch" ? ["read"] : (valueAfter("--tools") ?? "").split(",").filter(Boolean).sort(),
+    model: (valueAfter("--model") ?? "").replace(/:(low|medium|high)$/, ""),
+    thinking: (valueAfter("--model") ?? "").match(/:(low|medium|high)$/)?.[1],
   }),
 });
 if (fakeMode === "early-close") process.exit(0);
@@ -61,6 +63,10 @@ function complete() {
 async function handle(command) {
   if (command.type === "prompt") {
     prompt = command.message ?? "";
+    if (fakeMode === "continuation") {
+      ensureSession();
+      fs.appendFileSync(sessionFile, `${JSON.stringify({ type: "message", message: { role: "user", content: prompt } })}\n`);
+    }
     emit({ id: command.id, type: "response", command: "prompt", success: true });
     emit({ type: "agent_start" });
     if (fakeMode === "malformed") {
@@ -68,6 +74,11 @@ async function handle(command) {
       return;
     }
     if (fakeMode === "hang") return;
+    if (fakeMode === "continuation-stale" && valueAfter("--session")) {
+      settled = true;
+      emit({ type: "agent_settled" });
+      return;
+    }
     if (fakeMode.startsWith("check-")) {
       const { runCheck } = await import("../../verification.ts");
       const request = { argv: [process.execPath, "-e", 'console.log("real check output")'], criterionIds: ["behavior"], kind: "automated-test" };

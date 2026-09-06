@@ -31,6 +31,9 @@ let fallbackSequence = 0;
 export type AgentRunProgress = (message: string) => void;
 
 export interface AgentRunContext {
+  /** Only native leased writer actions may set this task authority binding. */
+  writerBinding?: { planId: string; taskDigest: string };
+  continuation?: { runId: string; expectedWorkspaceSnapshot: string };
   dashboard?: WorkbenchDashboardController;
   groupId?: string;
   groupTitle?: string;
@@ -86,6 +89,11 @@ export interface AgentRunManagerOptions {
 }
 
 interface ActiveRun {
+  lifecycleEpoch: number;
+  continuationPromptDispatched?: boolean;
+  continuationTurnStarted?: boolean;
+  continuationFreshAssistant?: boolean;
+  continuationDepth?: number;
   readonly request: AgentRunRequest;
   readonly paths: AgentRunPaths;
   readonly child: ChildProcessWithoutNullStreams;
@@ -127,6 +135,43 @@ interface ActiveRun {
   readonly routeModel?: string;
   terminationTimer?: NodeJS.Timeout;
   killTimer?: NodeJS.Timeout;
+}
+
+interface ClosedWriterCheckpoint {
+  readonly record: AgentRunRecord;
+  readonly binding: { planId: string; taskDigest: string };
+  readonly sourcePromptDigest: string;
+  readonly transcript: Buffer;
+  readonly transcriptDigest: string;
+  readonly snapshot: string;
+  readonly depth: number;
+  readonly fastMode: boolean;
+}
+
+async function readWriterTranscript(record: AgentRunRecord): Promise<Buffer> {
+  if (!record.sessionFile || !record.sessionId) throw new Error("Writer session checkpoint is missing.");
+  const root = await fs.lstat(record.sessionDir);
+  if (!root.isDirectory() || root.isSymbolicLink() || (root.mode & 0o077) !== 0
+    || !containedPath(await fs.realpath(record.sessionDir), await fs.realpath(record.sessionFile))) throw new Error("Writer session root is unsafe.");
+  const handle = await fs.open(record.sessionFile, fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW | fsSync.constants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 2 * 1024 * 1024 || (stat.mode & 0o077) !== 0) throw new Error("Writer transcript is not a bounded private regular file.");
+    const buffer = Buffer.alloc(2 * 1024 * 1024 + 1);
+    let count = 0;
+    while (count < buffer.length) {
+      const chunk = await handle.read(buffer, count, buffer.length - count, count);
+      if (!chunk.bytesRead) break;
+      count += chunk.bytesRead;
+    }
+    if (count > 2 * 1024 * 1024) throw new Error("Writer transcript exceeds its size limit.");
+    const content = buffer.subarray(0, count);
+    const lines = content.toString("utf8").trim().split("\n");
+    const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const header = entries[0];
+    if (!header || header.type !== "session" || header.id !== record.sessionId || header.cwd !== record.projectRoot) throw new Error("Writer transcript identity does not match its checkpoint.");
+    return Buffer.from(content);
+  } finally { await handle.close(); }
 }
 
 function splitModel(value: string | undefined): { model?: string; thinking?: string; identity?: string } {
@@ -335,6 +380,8 @@ export class AgentRunManager {
   readonly store: AgentRunStore;
   private readonly active = new Map<string, ActiveRun>();
   private readonly recent = new Map<string, AgentRunRecord>();
+  private readonly closedWriters = new Map<string, ClosedWriterCheckpoint>();
+  private lifecycleEpoch = 0;
   private readonly sessionHost?: AgentSessionHost;
   private readonly spawnProcess: typeof spawn;
   private readonly now: () => Date;
@@ -371,6 +418,16 @@ export class AgentRunManager {
   }
 
   async start(request: AgentRunRequest): Promise<AgentRunHandle> {
+    const lifecycleEpoch = this.lifecycleEpoch;
+    let prior: ClosedWriterCheckpoint | undefined;
+    if (request.runContext?.continuation) {
+      const source = request.runContext.continuation.runId;
+      prior = this.closedWriters.get(source);
+      if (!prior) throw new Error("Writer continuation is unavailable, already consumed, or belongs to a previous parent session. Start a fresh bounded writer.");
+      // Consume synchronously before any await: concurrent continuations cannot fork the checkpoint.
+      this.closedWriters.delete(source);
+      if (request.agent.readOnly || !request.runContext.writerBinding || prior.depth >= 3) throw new Error("Only completed bound writers may continue, for at most three repair turns.");
+    }
     const projectRoot = await fs.realpath(request.projectRoot);
     const memoryProjectRoot = await fs.realpath(request.runContext?.memoryProjectRoot ?? projectRoot);
     const requestedRunId = request.runId ?? request.runContext?.jobId ?? `agent-${request.agent.id}`;
@@ -388,6 +445,22 @@ export class AgentRunManager {
     if (interactive && !routeModel) throw new Error("Interactive Workbench agents require a resolved model route before launch.");
     const model = splitModel(routeModel);
     const fastMode = (request.agent.fastMode ?? this.defaultFastMode) && supportsFastModeRoute(model.identity);
+    if (prior) {
+      const binding = request.runContext!.writerBinding!;
+      if (prior.record.projectRoot !== projectRoot || prior.record.memoryProjectRoot !== memoryProjectRoot
+        || prior.binding.planId !== binding.planId || prior.binding.taskDigest !== binding.taskDigest
+        || prior.record.agentId !== request.agent.id || prior.record.model !== routeModel
+        || prior.record.allowBash !== (request.agent.allowBash === true)
+        || JSON.stringify(prior.record.tools) !== JSON.stringify(tools)
+        || prior.sourcePromptDigest !== digestAgentRunText(request.systemPrompt)
+        || prior.record.systemPromptDigest !== digestAgentRunText(systemPrompt)
+        || prior.record.runtime !== (interactive ? "interactive-tui" : "headless-rpc")
+        || prior.fastMode !== fastMode
+        || prior.record.trustedCodeDigest !== await trustedCodeDigest()) throw new Error("Writer continuation task, model, tools, instructions, or runtime binding changed.");
+      const expected = request.runContext!.continuation!.expectedWorkspaceSnapshot;
+      if (expected !== prior.snapshot || await workspaceSnapshot(projectRoot) !== prior.snapshot) throw new Error("Workspace changed since the writer checkpoint; inspect changes and start a fresh bounded writer.");
+      if (digestAgentRunText((await readWriterTranscript(prior.record)).toString("utf8")) !== prior.transcriptDigest) throw new Error("Writer transcript changed after the process exited.");
+    }
     const timestamp = this.now().toISOString();
     const baseRecord = await this.store.save(paths, {
       version: 1,
@@ -422,7 +495,7 @@ export class AgentRunManager {
     const args = [
       ...(interactive ? [] : ["--mode", "rpc"]),
       "--session-dir", paths.sessions,
-      ...(interactive ? ["--session-id", runId] : []),
+      ...(prior ? ["--session", path.join(paths.sessions, "continued-session.jsonl")] : interactive ? ["--session-id", runId] : []),
       "--no-extensions", "--extension", CHILD_TOOLS_PATH,
       ...(fastMode ? ["--extension", CHILD_FAST_MODE_PATH] : []),
       ...(interactive ? ["--extension", CHILD_BRIDGE_EXTENSION_PATH] : []),
@@ -444,6 +517,14 @@ export class AgentRunManager {
       readOnly: request.agent.readOnly,
     });
     const runtime = await runtimeIdentity(piInvocation, childEnvironment);
+    if (prior) {
+      if (runtime.runtimePath !== prior.record.runtimePath || runtime.runtimeDigest !== prior.record.runtimeDigest) throw new Error("Writer continuation executable changed.");
+      const restored = prior.transcript.toString("utf8").split("\n");
+      // Clone context into a new session identity; old transcript is never mutated or replayed.
+      const header = JSON.parse(restored[0]!) as Record<string, unknown>;
+      restored[0] = JSON.stringify({ ...header, id: runId, timestamp: this.now().toISOString() });
+      await fs.writeFile(path.join(paths.sessions, "continued-session.jsonl"), restored.join("\n"), { flag: "wx", mode: 0o600 });
+    }
     let launch: { invocation: { command: string; args: readonly string[] }; environment: NodeJS.ProcessEnv };
     try {
       launch = this.sessionHost
@@ -462,6 +543,7 @@ export class AgentRunManager {
       this.recent.set(runId, failed);
       throw error;
     }
+    if (this.lifecycleEpoch !== lifecycleEpoch) throw new Error("Parent lifecycle changed before writer launch; start a fresh bounded assignment.");
     const child = this.spawnProcess(launch.invocation.command, [...launch.invocation.args], {
       cwd: projectRoot,
       shell: false,
@@ -486,12 +568,14 @@ export class AgentRunManager {
     // unhandled rejection; awaiting loadoutReady below still rejects normally.
     void loadoutReady.catch(() => undefined);
     const active: ActiveRun = {
+      lifecycleEpoch,
       request: { ...request, projectRoot }, paths, child, rpc, completion, resolve, reject,
       record: baseRecord, persistChain: Promise.resolve(), stderr: "", latestAssistant: "", currentAssistant: "",
       questionAdmissionLocked: false, answerInFlight: false, loadoutVerified: false, loadoutReady, resolveLoadout, rejectLoadout,
       promptAccepted: false, settledSeen: false, finalHandshakeDone: false, cancellationRequested: false,
       terminationRequested: false, closed: false, assistantTurns: 0, toolCalls: 0, synthesisQueued: false, interactive, routeModel,
       checkRequests: new Map(), checkReceipts: [],
+      continuationDepth: prior ? prior.depth + 1 : 0,
     };
     this.active.set(runId, active);
     child.stderr.on("data", (chunk: Buffer) => { active.stderr = boundedAppend(active.stderr, chunk.toString(), MAX_AGENT_RPC_STDERR_BYTES); });
@@ -543,6 +627,7 @@ export class AgentRunManager {
         if (timer) clearTimeout(timer);
       }
       if (active.protocolFailure || active.closed) throw active.protocolFailure ?? new AgentRpcProtocolError("process_closed", "Agent closed before prompt acceptance.");
+      active.continuationPromptDispatched = Boolean(request.runContext?.continuation);
       const response = await rpc.request({ type: "prompt", message: `Task: ${request.task}` }, 30_000);
       active.promptAccepted = response.success;
       if (!active.promptAccepted) throw new AgentRpcProtocolError("prompt_rejected", "Agent prompt was rejected before acceptance.");
@@ -667,6 +752,8 @@ export class AgentRunManager {
   }
 
   async recover(projectRoot: string): Promise<AgentRunRecord[]> {
+    this.lifecycleEpoch++;
+    this.closedWriters.clear();
     const records = await this.store.list(projectRoot);
     const recovered: AgentRunRecord[] = [];
     for (const record of records) {
@@ -688,6 +775,8 @@ export class AgentRunManager {
   }
 
   async shutdown(): Promise<void> {
+    this.lifecycleEpoch++;
+    this.closedWriters.clear();
     const runs = [...this.active.entries()];
     await Promise.all(runs.map(([runId]) => this.cancel(runId)));
     const wait = Promise.allSettled(runs.map(([, active]) => active.completion));
@@ -739,6 +828,10 @@ export class AgentRunManager {
     const dashboard = active.request.runContext?.dashboard ?? this.dashboard;
     const job = dashboard?.state.getJob(runId);
     if (event.type === "agent_start") {
+      if (active.continuationPromptDispatched) {
+        active.continuationTurnStarted = true;
+        active.continuationFreshAssistant = false;
+      }
       void this.transition(active, "running").catch((error) => this.onProtocolFailure(runId, new AgentRpcProtocolError("record_write_failed", error instanceof Error ? error.message : String(error))));
       dashboard?.updateJob(runId, { status: "running", startedAt: job?.startedAt ?? Date.now(), latestActivity: "Agent started" });
       return;
@@ -759,6 +852,7 @@ export class AgentRunManager {
       }
       const message = event.message as Record<string, unknown>;
       if (message.role === "assistant" && !active.settledSeen) {
+        if (active.continuationTurnStarted && text.trim()) active.continuationFreshAssistant = true;
         active.assistantTurns++;
         if (typeof message.stopReason === "string") active.lastStopReason = message.stopReason;
         this.enforceBudget(active);
@@ -881,11 +975,11 @@ export class AgentRunManager {
         if (JSON.stringify(actual) !== JSON.stringify(expected)) {
           throw new AgentRpcProtocolError("loadout_mismatch", "Child active tools do not match the persisted exact loadout.");
         }
-        if (active.interactive) {
+        if (active.interactive || active.request.runContext?.writerBinding) {
           const expectedRoute = splitModel(active.routeModel);
           if (!expectedRoute.identity || value.model !== expectedRoute.identity
             || (expectedRoute.thinking !== undefined && value.thinking !== expectedRoute.thinking)) {
-            throw new AgentRpcProtocolError("loadout_mismatch", "Interactive child model or thinking level does not match the requested route.");
+            throw new AgentRpcProtocolError("loadout_mismatch", "Child model or thinking level does not match the requested route.");
           }
         }
         active.loadoutVerified = true;
@@ -954,6 +1048,9 @@ export class AgentRunManager {
 
   private async finalHandshake(active: ActiveRun): Promise<void> {
     try {
+      if (active.request.runContext?.continuation && !active.continuationFreshAssistant) {
+        throw new AgentRpcProtocolError("missing_continuation_output", "Writer continuation settled without a fresh assistant response; prior transcript text is not a result.");
+      }
       const [textResponse, stateResponse] = await Promise.all([
         active.rpc.request({ type: "get_last_assistant_text" }, 15_000),
         active.rpc.request({ type: "get_state" }, 15_000),
@@ -1057,6 +1154,7 @@ export class AgentRunManager {
       errorCode = "record-write-failed";
     }
     const result: AgentResult = {
+      runId,
       agentId: active.request.agent.id,
       title: active.request.agent.title,
       output,
@@ -1065,6 +1163,23 @@ export class AgentRunManager {
       ...(status === "cancelled" ? { cancelled: true } : {}),
       ...(status !== "completed" ? { error: terminalPersistenceError?.message || active.protocolFailure?.message || active.extensionFailure || active.budgetFailure || active.stderr || errorCode || "Agent run failed." } : {}),
     };
+    if (status === "completed" && active.lifecycleEpoch === this.lifecycleEpoch && !active.request.agent.readOnly && active.request.runContext?.writerBinding && active.routeModel) {
+      try {
+        const transcript = await readWriterTranscript(active.record);
+        const snapshot = await workspaceSnapshot(active.record.projectRoot);
+        if (active.lifecycleEpoch !== this.lifecycleEpoch) throw new Error("Parent lifecycle changed while checkpointing the writer.");
+        this.closedWriters.set(runId, {
+          record: active.record, binding: { ...active.request.runContext.writerBinding },
+          sourcePromptDigest: digestAgentRunText(active.request.systemPrompt), transcript,
+          transcriptDigest: digestAgentRunText(transcript.toString("utf8")), snapshot, depth: active.continuationDepth ?? 0,
+          fastMode: Boolean((active.request.agent.fastMode ?? this.defaultFastMode) && supportsFastModeRoute(splitModel(active.routeModel).identity)),
+        });
+        while (this.closedWriters.size > 32) this.closedWriters.delete(this.closedWriters.keys().next().value!);
+        if ((active.continuationDepth ?? 0) < 3) result.continuation = { runId, workspaceSnapshot: snapshot };
+      } catch {
+        // A valid finished result does not imply its transcript is eligible for reuse.
+      }
+    }
     const dashboard = active.request.runContext?.dashboard ?? this.dashboard;
     dashboard?.finishJob(runId, status === "completed" ? "completed" : status === "cancelled" ? "cancelled" : "failed", {
       output,

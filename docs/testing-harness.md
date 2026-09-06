@@ -16,6 +16,24 @@ For a shorter verification-focused run:
 rtk proxy bun test tests/verification.test.ts tests/agent-context.test.ts tests/workflow-task-packet.test.ts tests/workflow-orchestration.test.ts
 ```
 
+## Coordinator recovery and supervision regressions
+
+```sh
+rtk proxy bun test tests/coordinator-planning-recovery.test.ts tests/coordinator-execution-recovery.test.ts tests/task-model-policy.test.ts tests/supervision-evidence.test.ts tests/review-continuity.test.ts tests/agent-run-manager.test.ts
+```
+
+These check final-round reload recovery, bounded failure recovery, cancellation, stale/forged inspection IDs, exact scoped model preferences, dirty-baseline handoffs, visual provenance distinctions, and closed transcript continuation. They test harness mechanics using fixtures and native subprocesses; they do not measure Astra's design quality.
+
+In a disposable project, ask Main Pi to record Astra for `ui-ux` implementation, repair, and review using `workbench_model_policy`. Inspect the stored policy with its status action. Reload, then request a bounded UI repair with `domain: "ui-ux"` and no model override. Expect the same exact route; a conflicting or unavailable model must launch no substitute.
+
+After an implementation, inspect the returned handoff. It should distinguish preexisting dirty work from observed changes and label child claims separately. Ask Main Pi to use `workbench_execute inspect` for relevant source and cite the returned IDs in `verify`. An invented ID must fail. Edit a source file and retry with old IDs: it must request fresh inspection.
+
+To check reload recovery at the final review cycle, use a scratch workflow with one allowed cycle. Obtain passing native review, reload before completion, inspect again, then use `recover`. Expect fresh reviewers/checks, unchanged substantive counters, no writer replay, and one consumed recovery allowance. Reload again: a second recovery must refuse. A cancelled or substantively rejected result must never regain approval through recovery.
+
+For visual work, submit the five-field `designBrief` during plan review. At execution, source evidence alone must not permit verify. Return a real PNG with `visual`, reported route/viewport, and observed interactions, inspect the rendered image, then include both source and visual IDs. Image registration checks bytes and dimensions; independently confirm the actual browser route, freshness, keyboard behavior, and fallback. A deliberately corrupt PNG must fail registration.
+
+After a successful writer returns a checkpoint, use it for a small `repair: true` correction. Expect a fresh child run with retained context, the same exact model, and only the new correction sent as the task. Reusing the checkpoint, changing source independently, or reloading must refuse continuation; use a fresh bounded writer after inspection.
+
 ## Check the loaded Pi tool
 
 Use a disposable Git project and start Pi there. In an existing Pi session, run `/reload` to load the updated extension. Trust the scratch project if Pi requests it; restart Pi after saving a new trust decision.

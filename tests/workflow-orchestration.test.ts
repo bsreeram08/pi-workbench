@@ -241,7 +241,7 @@ describe("Main Pi planning control", () => {
           for (const receipt of evidence.receipts) { receipt.snapshotBefore = snapshot; receipt.snapshotAfter = snapshot; }
           return agentResult(agent, packetVerification(packet), { verification: evidence });
         }
-        return agentResult(agent, outcome === "rejected" ? "<code-verdict>FAIL</code-verdict>" : "<code-verdict>PASS</code-verdict>");
+        return agentResult(agent, outcome === "rejected" ? "<code-verdict>CHANGES_REQUIRED</code-verdict>" : "<code-verdict>PASS</code-verdict>");
       }, { coordinator: true });
       try {
         packet = await approvedPacketState(item.root);
@@ -252,11 +252,14 @@ describe("Main Pi planning control", () => {
         expect(item.handoffs[0]).toContain("inspect actual files");
         expect((await loadCurrentWorkflowPlan(paths))?.status).toBe("executing");
         const tool = item.tools.get("workbench_execute");
-        const base = { planId: "approved-packet-plan", assessment: "I inspected the hero and tested navigation." };
+        const base = { planId: "approved-packet-plan", assessment: "I inspected the hero and tested navigation.", evidenceIds: [] as string[] };
         await expect(tool.execute("early", { ...base, action: "complete" }, undefined, undefined, ctx)).rejects.toThrow("native review");
         await expect(tool.execute("missing", { ...base, action: "implement", task: "Build the hero only" }, undefined, undefined, ctx)).rejects.toThrow("explicit model");
         await tool.execute("implement", { ...base, action: "implement", task: "Build the hero only", model: "openai-codex/gpt-6-astra:high" }, undefined, undefined, ctx);
         expect(roles).toEqual(["implementer"]);
+        await fs.writeFile(path.join(item.root, "hero.ts"), "export const hero = 'accessible navigation';\n");
+        const inspection = await tool.execute("inspect", { action: "inspect", planId: base.planId, paths: ["hero.ts"] }, undefined, undefined, ctx);
+        base.evidenceIds = [inspection.details.receipt.id];
         const checked = await tool.execute("verify", { ...base, action: "verify" }, undefined, undefined, ctx);
         expect(roles).toEqual(["implementer", "technical-reviewer", "quality-reviewer"]);
         expect(checked.details.status).toBe(outcome === "rejected" ? "changes_required" : "verification_passed");

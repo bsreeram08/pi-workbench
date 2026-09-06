@@ -61,6 +61,8 @@ import { ensureProjectState, findProjectRoot, getProjectPaths } from "./project.
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { getCommunityKnowledgePath } from "./skill-evolution.ts";
 import { runSingleAgent } from "./subagents.ts";
+import type { AgentRunContext } from "./agent-run-manager.ts";
+import { createHash } from "node:crypto";
 import {
   assertMandatoryAgentBatch,
   assertMandatoryAgentResult,
@@ -74,6 +76,7 @@ import type { AgentResult, Exec } from "./types.ts";
 import { checkPassed } from "./verification.ts";
 import { registerCoordinatorPlanning } from "./coordinator-planning.ts";
 import { registerCoordinatorExecution } from "./coordinator-execution.ts";
+import { registerCoordinatorModelPolicy } from "./coordinator-model-policy.ts";
 import { startWorkflowActivity } from "./workflow-activity.ts";
 import { formatAgentResults } from "./prompts.ts";
 import {
@@ -260,6 +263,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     effort: RoutingEffort = "auto",
     validateResult = true,
     model?: string,
+    writerContext?: Pick<AgentRunContext, "writerBinding" | "continuation">,
   ): Promise<AgentResult> {
     throwIfWorkflowCancelled(signal);
     const base = getWorkflowAgentProfile(role);
@@ -285,7 +289,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       guidance ? `${guidance}\n\n${delegatedTask}` : delegatedTask,
       signal,
       progress.update,
-      { dashboard, groupId, groupTitle, jobId, budget: route.budget, contextTask: userTask },
+      { dashboard, groupId, groupTitle, jobId, budget: route.budget, contextTask: userTask, ...writerContext },
     );
     throwIfWorkflowCancelled(signal);
     const routedResult: AgentResult = {
@@ -1017,7 +1021,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       if (ownsRun) dashboard.beginRun(`coordinator-review-${Date.now()}`);
       const progress = progressFor(pi, ctx, "Coordinator", state.task, "plan", false);
       try {
-        return await reviewPlan(project.root, project.config, state.task, state.plan, progress, state.reviewRounds, signal, history, model);
+        const direction = state.designBrief ? `${state.task}\n\nCoordinator design brief (review together with this plan):\n${JSON.stringify(state.designBrief)}\nDo not reopen deliberate style choices unless they violate requirements or new evidence identifies a defect.` : state.task;
+        return await reviewPlan(project.root, project.config, direction, state.plan, progress, state.reviewRounds, signal, history, model);
       } finally {
         progress.clear();
         if (ownsRun) dashboard.endRun();
@@ -1034,17 +1039,20 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   }
   const startCoordinatorExecution = registerCoordinatorExecution(pi, {
     resolveProject, withLease, report,
-    implement(project, state, task, model, signal, ctx) {
+    implement(project, state, task, model, signal, ctx, continuation) {
       return coordinatorRole(state, ctx, (progress) => runRole(
         project.root, project.config, "implementer", state.task,
-        buildImplementationTask(state.task, state.plan, `Main Pi's bounded assignment:\n${task}\nDo only this slice; return evidence and open questions to Main Pi.`, state.packet),
-        progress, "coordinator-implementation", "Implementation", agentJobId("coordinator", "implementer", Date.now()), signal, "auto", true, model,
+        continuation
+          ? `Main Pi's new bounded correction:\n${task}\nUse the retained task context, but execute only this correction. Do not replay the original assignment. Preserve approved constraints and unrelated work. Return evidence and unresolved questions to Main Pi.`
+          : buildImplementationTask(state.task, state.plan, `Main Pi's bounded assignment:\n${task}\nDo only this slice; return evidence and open questions to Main Pi.${state.designBrief ? `\nApproved design brief:\n${JSON.stringify(state.designBrief)}` : ""}`, state.packet),
+        progress, "coordinator-implementation", "Implementation", agentJobId("coordinator", "implementer", Date.now()), signal, "auto", false, model,
+        { writerBinding: { planId: state.id, taskDigest: createHash("sha256").update(JSON.stringify({ task: state.task, plan: state.plan, designBrief: state.designBrief })).digest("hex") }, continuation },
       ));
     },
     verify(project, state, assessment, model, signal, ctx) {
       return coordinatorRole(state, ctx, async (progress) => {
         const reviews = await runRoleBatch(project.root, project.config,
-          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, "", state.packet), model })),
+          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\nPreserve deliberate design decisions; reject only concrete defects.` : "", state.packet), model })),
           state.task, progress, "coordinator-review", "Independent review", signal);
         const verification = await runRole(project.root, project.config, "quality-reviewer", state.task,
           state.packet ? buildPacketVerificationTask(state.task, state.plan, "", state.packet) : buildIndependentVerificationTask(state.task, state.plan, ""),
@@ -1053,6 +1061,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       });
     },
   });
+
+  registerCoordinatorModelPolicy(pi, { resolveProject, withLease });
 
   pi.registerTool({
     name: "delegate_task",

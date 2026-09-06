@@ -13,6 +13,8 @@ export interface AgentSpec {
 }
 
 export interface AgentResult {
+  runId?: string;
+  continuation?: { runId: string; workspaceSnapshot: string };
   agentId: string;
   title: string;
   output: string;

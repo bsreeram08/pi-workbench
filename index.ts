@@ -43,6 +43,9 @@ import { runAgentsParallel, runSingleAgent } from "./subagents.ts";
 import { createCmuxAgentSessionHost } from "./agent-cmux-session.ts";
 import { AgentRunManager, setDefaultAgentRunManager } from "./agent-run-manager.ts";
 import { registerAgentRuntimeTools } from "./agent-runtime-tools.ts";
+import { registerPromptEditor } from "./prompt-editor.ts";
+import { captureWorkflowAuthority, getWorkflowPaths } from "./workflow-state.ts";
+import { readTaskModelPolicy } from "./task-model-policy.ts";
 import { assertMandatoryAgentBatch, assertMandatoryAgentResult } from "./agent-result-guard.ts";
 import { acquireExclusiveLease } from "./exclusive-lease.ts";
 import { WorkbenchDashboardController } from "./dashboard-controller.ts";
@@ -999,6 +1002,21 @@ export default function piWorkbench(pi: ExtensionAPI) {
     reprompterPath: REPROMPTER_SKILL,
     report: (title, body) => report(pi, title, body),
     getRoutingState: () => modelRouting.getState(),
+  });
+
+  registerPromptEditor(pi, {
+    report: (title, body) => report(pi, title, body),
+    async context(ctx) {
+      if (guardSubagentLaunch(ctx)) return "Project context was not loaded because the project trust decision does not permit it. Improve the supplied text only.";
+      const root = await findProjectRoot(ctx.cwd, exec);
+      const paths = getWorkflowPaths(getProjectPaths(root).stateDir);
+      const state = (await captureWorkflowAuthority(paths)).state;
+      const policy = state ? await readTaskModelPolicy(paths, state) : null;
+      return JSON.stringify({ projectRoot: root,
+        recordedWorkflow: state ? { id: state.id, task: state.task, status: state.status, designBrief: state.designBrief, modelPolicy: policy } : null,
+        provenance: "Recorded workflow context, not fresh source inspection. Use it only when relevant to this request. A draft rewrite cannot change approved scope or model preferences.",
+      });
+    },
   });
 
   pi.registerTool({

@@ -737,8 +737,8 @@ describe("Pi Workbench updater status trust and channel policy", () => {
 });
 
 describe("Pi Workbench updater apply transaction", () => {
-  test("uses exact default/full installer argument arrays and reload-eligible success", async () => {
-    for (const profile of ["default", "full"] as const) {
+  for (const profile of ["default", "full"] as const) {
+    test(`uses exact ${profile} installer arguments and reload-eligible success`, async () => {
       const fixture = await createFixture(profile);
       let confirmation = "";
       const result = await fixture.updater(fakeReleases([release("v1.1.0")]), profile).apply({
@@ -753,8 +753,8 @@ describe("Pi Workbench updater apply transaction", () => {
       const install = fixture.calls.find((item) => item.command === path.join(fixture.root, "install.sh"));
       expect(install?.args).toEqual(profile === "full" ? ["--full"] : []);
       expect(git(fixture.root, "rev-parse", "HEAD")).toBe(fixture.candidate);
-    }
-  }, 15_000);
+    }, 15_000);
+  }
 
   test("accepts the legacy repository origin and migrates it only after a confirmed update", async () => {
     const successful = await createFixture();

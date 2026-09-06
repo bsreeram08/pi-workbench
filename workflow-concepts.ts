@@ -37,7 +37,8 @@ export function routeConcepts(task: string, agentId: WorkflowAgentId): ConceptRo
   // Matt Pocock's engineering discipline is the baseline: alignment, shared language,
   // small feedback loops, deep modules, and tests at observable seams.
   if (["requirements-analyst", "planner", "execution-manager"].includes(agentId)) {
-    skills.push("grilling", "domain-modeling", "codebase-design");
+    skills.push("domain-modeling", "codebase-design");
+    if (includesAny(task, ["grilling", "grill me", "interview me"])) skills.push("grilling");
     principles.push(
       "Resolve consequential ambiguity before code; do not make the user choose trivia repository evidence can settle.",
       "Use the project's ubiquitous language and preserve durable decisions so future agents do not rediscover them.",

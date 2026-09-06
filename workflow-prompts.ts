@@ -2,6 +2,7 @@ import type { WorkflowAgentProfile } from "./workflow-agents.ts";
 import { formatConceptGuidance } from "./workflow-concepts.ts";
 import { formatWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
 import type { AgentResult } from "./types.ts";
+import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
 
 export interface PlanningClearance {
   ready: boolean;
@@ -18,7 +19,7 @@ Work from observable evidence. Verify paths before naming them and distinguish f
 
 export function buildWorkflowSystemPrompt(
   agent: WorkflowAgentProfile,
-  reprompterPath: string,
+  _reprompterPath: string,
   task: string,
   communityKnowledgePath?: string,
 ): string {
@@ -33,6 +34,8 @@ Role: ${agent.description}
 Operating contract: ${agent.contract}
 
 ${SHARED_WORKFLOW_RULES}
+
+${INTENT_DISCIPLINE}
 
 ${access}
 
@@ -202,7 +205,7 @@ Reject the plan if its terminal <workflow-task-packet> marker is missing, multip
 Return:
 ## Verdict
 ## Blocking Findings
-Each blocker must include evidence and a concrete correction.
+Each blocker must include a stable finding label, affected requirement, evidence, consequence, and concrete correction. Eligible blockers are a violated explicit requirement or accepted decision, a failing regression, a reproducibly broken flow, a concrete security/data-loss/compatibility risk, or a conflicting external contract. Keep optional improvements in notes; approval with notes is still OKAY. New serious findings remain eligible on later rounds when supported by new evidence.
 ## Non-blocking Notes
 ## Verification Assessment
 End with exactly one marker:
@@ -457,12 +460,31 @@ function uniqueTerminalVerdict(output: string, markerName: "plan-verdict" | "cod
   const matches = [...output.matchAll(pattern)];
   if (matches.length !== 1) return undefined;
   const match = matches[0];
-  const end = (match.index ?? 0) + match[0].length;
+  const start = match.index ?? 0;
+  const lineStart = output.lastIndexOf("\n", start - 1) + 1;
+  // A verdict is protocol, not quoted prose or a Markdown code example.
+  if (!/^ {0,3}$/.test(output.slice(lineStart, start))) return undefined;
+  let fence: { character: string; length: number } | undefined;
+  for (const line of output.slice(0, lineStart).split("\n")) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!delimiter) continue;
+    if (!fence) fence = { character: delimiter[1][0], length: delimiter[1].length };
+    else if (delimiter[1][0] === fence.character && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = undefined;
+  }
+  if (fence) return undefined;
+  const end = start + match[0].length;
   return output.slice(end).trim() ? undefined : match[1];
 }
 
 export function parsePlanVerdict(output: string): PlanVerdict {
   return uniqueTerminalVerdict(output, "plan-verdict", /<plan-verdict>\s*(OKAY|REJECT)\s*<\/plan-verdict>/g) === "OKAY" ? "OKAY" : "REJECT";
+}
+
+/** Diagnostic only: malformed transport output is not a substantive reviewer rejection. */
+export function reviewProtocolValid(output: string, kind: "plan" | "code"): boolean {
+  return kind === "plan"
+    ? uniqueTerminalVerdict(output, "plan-verdict", /<plan-verdict>\s*(OKAY|REJECT)\s*<\/plan-verdict>/g) !== undefined
+    : uniqueTerminalVerdict(output, "code-verdict", /<code-verdict>\s*(PASS|CHANGES_REQUIRED|BLOCKED)\s*<\/code-verdict>/g) !== undefined;
 }
 
 export function parseCodeVerdict(output: string): CodeVerdict {
@@ -471,11 +493,17 @@ export function parseCodeVerdict(output: string): CodeVerdict {
 }
 
 export function planReviewsPass(results: AgentResult[], required: 1 | 2 = 2): boolean {
-  return results.length >= required && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim() && parsePlanVerdict(result.output) === "OKAY");
+  return hasIndependentReviewLanes(results, required) && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim() && parsePlanVerdict(result.output) === "OKAY");
 }
 
 export function codeReviewsPass(results: AgentResult[], required: 1 | 2 = 2): boolean {
-  return results.length >= required && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim() && parseCodeVerdict(result.output) === "PASS");
+  return hasIndependentReviewLanes(results, required) && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim() && parseCodeVerdict(result.output) === "PASS");
+}
+
+function hasIndependentReviewLanes(results: AgentResult[], required: 1 | 2): boolean {
+  const ids = new Set(results.map(result => result.agentId));
+  return results.length === required && ids.size === required && ids.has("technical-reviewer")
+    && (required === 1 || ids.has("quality-reviewer"));
 }
 
 export function legacyVerificationPasses(output: string): boolean {

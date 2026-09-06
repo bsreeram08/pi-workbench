@@ -128,6 +128,7 @@ export default function piWorkbenchChildTools(pi: ExtensionAPI) {
         version: 1,
         runId,
         activeTools: [...pi.getActiveTools()].sort(),
+        ...(ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() } : {}),
       }));
     }
     const smokeFile = process.env.PI_WORKBENCH_CHILD_SMOKE_FILE?.trim();
