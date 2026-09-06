@@ -41,6 +41,8 @@ Important boundaries:
 
 ## Secrets
 
+Prompt editing keeps pending drafts in the extension's session memory and sends the supplied prompt plus bounded recorded context to Main Pi, where normal session/provider handling applies. Preview IDs are checked against the active request and project, and reload clears them. The editor baseline used to avoid overwrites is excluded from tool responses. `/prompt-use` only copies text; drafts confer no native workflow approval. Rewrite-only instructions constrain model behavior by guidance, not an OS sandbox.
+
 Do not commit `.env` files, Pi authentication state, sessions, memory stores, generated research containing private data, or provider credentials. If a credential appears in a commit, rotate it immediately before rewriting history; rewriting alone does not invalidate it.
 
 ## Closed writer continuation

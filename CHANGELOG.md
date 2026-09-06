@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added first-party `/improve-prompt` (`/improveprompt`) and `/enhance-prompt` (`/enhance`, `/reprompt`) with Main Pi drafting, labeled assumptions, bounded recorded project context, and an explicit `/prompt-use` editor action. Drafts cannot approve workflows. Shared prompt guidance now preserves explicit intent and model choices; planning no longer selects the grilling skill by default.
+
 - Added bounded Coordinator recovery after interrupted reviews or lost passing tickets, exact task/domain model preferences, host-recorded implementation handoffs, current parent source/PNG inspection receipts, approved design briefs, advisory finding continuity, and closed writer transcript reuse for bounded repairs. Approval and completion remain native gates.
 
 - Main Pi owns default `/plan` decisions and synthesis through native `workbench_plan` status/review/approve tools. Independent findings return to the Coordinator, and approval is bound to the unchanged reviewed draft. The automatic sequence remains available as `/plan --pipeline` and through `/autopilot`.

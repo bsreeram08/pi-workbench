@@ -23,9 +23,12 @@ Do not `pi install npm:pi-workbench`. Use the recursive Git installation below; 
 | Planning | `/plan`, `/start-work`, `/autopilot`, `/council` | Intent, isolated implementation, independent verification |
 | Verification | `workbench_verify` | Recorded commands, exit status, output artifacts, and code fingerprints |
 | Research | `/research` | Cited evidence ledger, not search-snippet authority |
+| Prompt editing | `/improve-prompt`, `/enhance-prompt`, `/reprompt` | Coordinator-written draft, labeled assumptions, explicit editor insertion |
 | Routing | `/model-routing` | Per-lane Codex or Grok 4.6 family for **children**; Main Pi stays put |
 
 Replaced companions: `pi-subagents`, `@capyup/pi-goal`, `@juicesharp/rpiv-todo`, `@juicesharp/rpiv-ask-user-question`. Do not enroll them. Use the first-party tools above.
+
+Use `/improveprompt <draft>` to clarify wording or `/enhance <draft>` to add useful context, constraints, and success criteria. Main Pi keeps your required experience, source restrictions, and exact model choices in view. Review the proposal, then `/prompt-use` copies it into your editor without submitting it. See [prompt editing and examples](docs/prompt-editing.md).
 
 Trust, child isolation, and cmux identity rules live in [`SECURITY.md`](SECURITY.md). Memory lifecycle lives in [`docs/memory.md`](docs/memory.md). The agent-runtime roadmap lives in [`docs/first-party-memory-and-agent-runtime.md`](docs/first-party-memory-and-agent-runtime.md).
 

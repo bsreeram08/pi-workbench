@@ -2,6 +2,7 @@ import type { WorkflowAgentProfile } from "./workflow-agents.ts";
 import { formatConceptGuidance } from "./workflow-concepts.ts";
 import { formatWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
 import type { AgentResult } from "./types.ts";
+import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
 
 export interface PlanningClearance {
   ready: boolean;
@@ -18,7 +19,7 @@ Work from observable evidence. Verify paths before naming them and distinguish f
 
 export function buildWorkflowSystemPrompt(
   agent: WorkflowAgentProfile,
-  reprompterPath: string,
+  _reprompterPath: string,
   task: string,
   communityKnowledgePath?: string,
 ): string {
@@ -33,6 +34,8 @@ Role: ${agent.description}
 Operating contract: ${agent.contract}
 
 ${SHARED_WORKFLOW_RULES}
+
+${INTENT_DISCIPLINE}
 
 ${access}
 

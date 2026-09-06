@@ -1,17 +1,14 @@
 import type { AgentResult, AgentSpec } from "./types.ts";
+import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
 
-const REPROMPTER_CONTRACT = `
-Apply RePrompter discipline before reasoning: identify the real intent, context, requirements, constraints, output format, and observable success criteria. If the request is ambiguous, expose the ambiguity instead of silently inventing an answer. Use evidence and label assumptions. Keep your output structured and concise.
-`;
-
-export function buildSpecialistSystemPrompt(agent: AgentSpec, reprompterPath: string, implementation = false): string {
+export function buildSpecialistSystemPrompt(agent: AgentSpec, _reprompterPath: string, implementation = false): string {
   return `You are the ${agent.title} in Pi Workbench.
 
 Role: ${agent.description}
 
-This is a project-scoped council. The user's intent is the source of truth, but the user may express it incompletely. Your job is to make the hidden intent explicit, challenge it, and provide useful evidence.
+This is a project-scoped council. The user's stated intent is the source of truth. Clarify missing details and provide evidence; distinguish your recommendations from what the user requested.
 
-${REPROMPTER_CONTRACT}
+${INTENT_DISCIPLINE}
 
 Clarify intent, constraints, and observable success where needed. Use the supplied task context rather than searching outside your delegated access for additional prompt frameworks.
 
@@ -44,7 +41,7 @@ export function buildRoundTask(
   checkpoint: string,
 ): string {
   const instruction = round === 1
-    ? "Independently interrogate the idea. Explain what you think the user may actually want, list assumptions, argue for and against proceeding, and ask the smallest set of high-leverage questions. Do not produce implementation code."
+    ? "Independently assess the stated idea. Explain your understanding, distinguish explicit requirements from assumptions, argue for and against proceeding, and ask only unresolved questions that materially affect the outcome. Do not produce implementation code."
     : round === 2
       ? "Challenge the other specialists' positions. Identify agreements, contradictions, missing constraints, and questions that would materially change the decision. Do not converge just to be agreeable."
       : "Move from debate to decision. State what is now understood, what remains unresolved, the recommended intent, explicit non-goals, and the decisions the user must approve. Preserve meaningful disagreement rather than hiding it.";

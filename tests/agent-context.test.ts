@@ -8,6 +8,12 @@ import { routeTask } from "../routing.ts";
 import { buildCodeReviewTask } from "../workflow-prompts.ts";
 
 describe("task-specific child context", () => {
+  test("planning interviews are opt-in rather than a default skill", () => {
+    for (const role of ["planner", "requirements-analyst", "execution-manager"] as const) {
+      expect(routeConcepts("Build a 3D resume from resume-data.json", role).skills).not.toContain("grilling");
+      expect(routeConcepts("Interview me about the requirements", role).skills).toContain("grilling");
+    }
+  });
   test("loads a full design skill larger than the instruction limit alongside implementation guidance", async () => {
     const base = await fs.mkdtemp(path.join(os.tmpdir(), "agent-context-large-"));
     try {
