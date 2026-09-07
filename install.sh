@@ -128,16 +128,11 @@ else
 fi
 python3 "$ROOT/scripts/install-config.py" preflight "${CONFIG_ARGS[@]}"
 
-if [[ -n "$BUN_BIN" ]]; then
+if ((STRICT == 1)); then
   (cd "$ROOT" && "${CLEAN_ENV[@]}" "$BUN_BIN" test --timeout=60000 tests)
-else
-  printf 'warning: bun is unavailable; skipped the Workbench test suite (use --strict to require it)\n' >&2
-fi
-
-if [[ -n "$TSC_BIN" ]]; then
   (cd "$ROOT" && "${CLEAN_ENV[@]}" node scripts/typecheck.mjs)
 else
-  printf 'warning: tsc is unavailable; skipped the strict TypeScript check (use --strict to require it)\n' >&2
+  printf 'Runtime installation: development checks are reserved for --strict; no checkout node_modules required.\n'
 fi
 
 SMOKE_OUT="$(mktemp)"
@@ -182,7 +177,7 @@ command_response = next(
 if not command_response or not command_response.get("success"):
     raise SystemExit("error: Pi Workbench command discovery failed")
 names = {item.get("name") for item in command_response.get("data", {}).get("commands", [])}
-required = {"plan", "start-work", "autopilot", "delegate", "workflow-status", "memory", "workbench-update"}
+required = {"plan", "start-work", "autopilot", "delegate", "workflow-status", "memory", "workbench-update", "enhance", "improveprompt", "reprompt", "prompt-use"}
 forbidden = {"prometheus", "ulw", "ultrawork", "discipline", "discipline-status", "planner", "workflow"}
 missing = sorted(required - names)
 unexpected = sorted(forbidden & names)
@@ -277,10 +272,15 @@ backup_and_link "$ROOT/setup/themes/ember.json" "$AGENT_DIR/themes/ember.json"
 if ((FULL == 1)); then
   backup_and_link "$ROOT/startup-header.ts" "$AGENT_DIR/extensions/startup-header.ts"
 fi
+# Check normal user-profile discovery, not only an explicitly loaded source file.
+# Run away from project-local extensions, with skills/templates excluded.
+python3 "$ROOT/scripts/check-installed-commands.py" --pi "$PI_BIN" --agent-dir "$CANONICAL_AGENT_DIR" --root "$ROOT"
 python3 "$ROOT/scripts/install-config.py" apply "${CONFIG_ARGS[@]}" --backup-root "$BACKUP_ROOT"
 COMMITTING=0
 
 printf "\nSreeram's Pi Workbench installed in %s\n" "$AGENT_DIR"
+printf 'Source checkout: %s\n' "$ROOT"
+printf 'Verified native Pi commands: /enhance /improveprompt /reprompt /prompt-use\n'
 if ((FULL == 1)); then
   printf 'Opinionated profile enabled. Existing JSON values were preserved except active model/thinking defaults and theme.\n'
 else
@@ -289,4 +289,5 @@ fi
 if [[ -d "$BACKUP_ROOT" ]]; then
   printf 'Backups: %s\n' "$BACKUP_ROOT"
 fi
-printf 'Run /reload in an existing Pi session. Run /skills-evolve only if you want to fetch trusted skills.\n'
+printf 'Run /reload in a Pi session using this same agent directory, or restart Pi.\n'
+printf 'Skills are separate: --full configures trusted sources but does not download your personal skills. Run /skills-evolve to fetch the configured sources.\n'

@@ -68,6 +68,8 @@ cd "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/pi-workbench"
 
 Default install links Workbench, the cmux companion, the framed editor, and the Ember file. It preserves the active theme, settings, preferences, and skill-evolution configuration. Replaced links roll back if a later step fails. No companion Pi packages are added.
 
+Runtime installation does not need checkout development dependencies, even if Bun or TypeScript is installed globally. Development checks run only with `--strict`. Before reporting success, the installer verifies that Pi discovers `/enhance`, `/improveprompt`, and the workflow commands from the installed user profile.
+
 Opinionated profile (Codex Sol/high, Ember, compact startup header, preference baseline, allowlisted skill evolution):
 
 ```bash
@@ -82,6 +84,8 @@ bun install --frozen-lockfile
 ```
 
 After install, start Pi or `/reload`.
+
+Use the same `PI_CODING_AGENT_DIR` when installing and launching Pi. The installer prints the destination and source checkout. `--full` enables the π SREE header and configures trusted skill sources; it does not copy the author's personal skill library or download skills. Run `/skills-evolve` for the configured sources. Running the installer again installs the current checkout; it does not fetch newer Git commits.
 
 ### Update
 
