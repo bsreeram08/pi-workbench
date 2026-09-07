@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-09-07
+
 - Fixed fresh runtime installs failing before extension linking when Bun or TypeScript was present without checkout development dependencies. Development checks are now explicit `--strict` checks. Installer success requires native user-profile discovery of the installed prompt/workflow commands and explains profile paths and separate skill installation.
 
 - Added first-party `/improve-prompt` (`/improveprompt`) and `/enhance-prompt` (`/enhance`, `/reprompt`) with Main Pi drafting, labeled assumptions, bounded recorded project context, and an explicit `/prompt-use` editor action. Drafts cannot approve workflows. Shared prompt guidance now preserves explicit intent and model choices; planning no longer selects the grilling skill by default.
