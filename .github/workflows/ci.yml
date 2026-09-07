@@ -46,7 +46,12 @@ jobs:
         run: bun audit --audit-level=high
 
       - name: Run tests and strict typecheck
-        run: bun run check
+        run: |
+          bun run public-check
+          # A timed-out async test can still touch fixtures during cleanup.
+          # Stop at the first failure rather than cascading into the job deadline.
+          bun run test --bail
+          bun run typecheck
 
       - name: Check installer syntax
         run: |

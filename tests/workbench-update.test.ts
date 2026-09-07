@@ -974,8 +974,8 @@ describe("Pi Workbench updater apply transaction", () => {
     }
   }, 90_000);
 
-  test("preserves concurrent tracked, untracked, and config changes after the installer and reports rollback incomplete", async () => {
-    for (const scenario of ["tracked", "untracked", "config"] as const) {
+  for (const scenario of ["tracked", "untracked", "config"] as const) {
+    test(`preserves concurrent ${scenario} changes after the installer and reports rollback incomplete`, async () => {
       const fixture = await createFixture();
       const settings = path.join(fixture.agentDir, "settings.json");
       fixture.controls.installerExit = 1;
@@ -995,8 +995,8 @@ describe("Pi Workbench updater apply transaction", () => {
       if (scenario === "untracked") expect(await fs.readFile(path.join(manifest.recovery.failedCheckout, "concurrent.txt"), "utf8")).toBe("concurrent untracked\n");
       if (scenario === "config") expect(await fs.readFile(settings, "utf8")).toBe("concurrent config\n");
       expect(await fs.stat(manifestPath)).toBeDefined();
-    }
-  }, 30_000);
+    }, 30_000);
+  }
 
   test("detects ignored checkout changes and preserves both old and live values", async () => {
     const fixture = await createFixture();

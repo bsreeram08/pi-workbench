@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Split concurrent updater rollback scenarios into independent tests with their own deadlines. CI stops on the first test failure so timeout cleanup errors cannot obscure the initial failure behind the overall job deadline.
+
 ## 0.7.0 — 2026-09-07
 
 - Fixed fresh runtime installs failing before extension linking when Bun or TypeScript was present without checkout development dependencies. Development checks are now explicit `--strict` checks. Installer success requires native user-profile discovery of the installed prompt/workflow commands and explains profile paths and separate skill installation.
