@@ -54,6 +54,31 @@ afterEach(async () => {
 });
 
 describe("public installer configuration safety", () => {
+  test("full runtime installation works without checkout dependencies even when Bun and tsc are on PATH", async () => {
+    const temp = await temporaryRoot();
+    const checkout = path.join(temp, "checkout");
+    const agentDir = path.join(temp, "agent");
+    const bin = path.join(temp, "bin");
+    await fs.cp(ROOT, checkout, { recursive: true, filter: (source) => {
+      const parts = path.relative(ROOT, source).split(path.sep);
+      return !parts.some((part) => ["node_modules", ".git", ".pi", ".agents", ".codex"].includes(part));
+    } });
+    await fs.mkdir(bin);
+    for (const tool of ["bun", "tsc"]) {
+      await fs.writeFile(path.join(bin, tool), "#!/bin/sh\necho unexpected-development-check >&2\nexit 97\n", { mode: 0o755 });
+    }
+    const result = spawnSync("bash", [path.join(checkout, "install.sh"), "--full"], {
+      cwd: checkout, encoding: "utf8", timeout: 60_000,
+      env: { ...cleanEnvironment(agentDir), PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("Native user-profile command discovery passed");
+    expect(result.stderr).not.toContain("unexpected-development-check");
+    expect(await fs.realpath(path.join(agentDir, "extensions", "startup-header.ts"))).toBe(await fs.realpath(path.join(checkout, "startup-header.ts")));
+    expect(await fs.realpath(path.join(agentDir, "extensions", "pi-workbench"))).toBe(await fs.realpath(checkout));
+    expect(await fs.stat(path.join(checkout, "node_modules")).catch(() => undefined)).toBeUndefined();
+  }, 90_000);
+
   test("fails closed on malformed existing JSON without mutating the installation", async () => {
     const root = await temporaryRoot();
     const agentDir = path.join(root, "agent");
