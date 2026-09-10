@@ -10,11 +10,13 @@ import {
   normalizeRoutingPolicy,
   parseFixedRoutingModel,
   parseSessionRoutingDirective,
+  parentRouteForState,
   routingFamily,
   type ModelRoutingState,
   type RoutingFamily,
   type SessionRoutingDirective,
 } from "./routing.ts";
+import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { findProjectRootSync } from "./project.ts";
 
 export const MODEL_ROUTING_ENTRY = "pi-workbench-model-routing";
@@ -163,10 +165,12 @@ export function readDurableRouting(cwd: string): DurableRoutingDefaults {
     };
     return {
       policy: normalizeRoutingPolicy(parsed.modelRoutingPolicy),
-      family: normalizeRoutingFamily(parsed.modelRoutingFamily),
+      family: parsed.modelRoutingFamily === undefined
+        ? "grok"
+        : normalizeRoutingFamily(parsed.modelRoutingFamily),
     };
   } catch {
-    return { policy: "balanced", family: "codex" };
+    return { policy: "balanced", family: "grok" };
   }
 }
 
@@ -214,25 +218,28 @@ function stateLabel(state: ModelRoutingState): string {
 }
 
 function stateDescription(state: ModelRoutingState): string {
+  const parent = parentRouteForState(state);
+  const parentLine = ` Main Pi is ${parent.provider}/${parent.id} (${parent.thinking}).`;
   if (state.policy === "fixed" && state.fixed) {
-    return `Fixed child route for this session: \`${state.fixed.model}\` (${state.fixed.thinking}). Main Pi keeps its current model; the session override changes delegated children only. To override the parent temporarily, launch it with \`pi --model ${state.fixed.model.replace(/:(?:low|medium|high)$/, "")} --thinking ${state.fixed.thinking}\`.`;
+    return `Fixed route for this session: \`${state.fixed.model}\` (${state.fixed.thinking}).${parentLine} Family and fixed routes move Main Pi and children together.`;
   }
   const family = routingFamily(state) === "grok"
     ? " Grok 4.6 family: light/standard/heavy use xai/grok-4.6 at low/medium/high thinking."
     : " Codex family: Luna/low, Terra/medium, and Sol/high.";
-  return `${state.policy[0].toUpperCase()}${state.policy.slice(1)} adaptive routing is active.${family} New sessions use the durable project family and policy. Persist with --default; session commands stay session-only.`;
+  return `${state.policy[0].toUpperCase()}${state.policy.slice(1)} adaptive routing is active.${family}${parentLine} Persist with --default so new sessions in this project follow.`;
 }
 
 function nativeRoutingGuidance(state: ModelRoutingState): string {
+  const parent = parentRouteForState(state);
   const fixed = state.policy === "fixed" && state.fixed
-    ? ` Fixed mode is active: use ${state.fixed.model} with ${state.fixed.thinking} thinking as every workflow default unless a delegation explicitly selects another model. Main Pi keeps its current model; fixed mode changes delegated children only.`
+    ? ` Fixed mode is active: use ${state.fixed.model} with ${state.fixed.thinking} thinking as every workflow default unless a delegation explicitly selects another model.`
     : "";
   const family = routingFamily(state);
   const routes = family === "grok" ? GROK_BALANCED_ROUTES : BALANCED_ROUTES;
-  const overrideNote = " Honor explicit per-task model requests using the model parameter on delegate_task, workbench_agent_start, or workbench_plan review: for example openai-codex/gpt-6-astra:high. This overrides session defaults for the call only; unavailable exact models fail without substitution. Effort controls the budget separately.";
+  const overrideNote = " Honor an explicit model=provider/model[:thinking] the user asked for on delegate_task, workbench_agent_start, or workbench_plan review. This overrides session defaults for that call only; unavailable exact models fail without substitution. Do not invent openai-codex/gpt-6-astra or any other model the user did not request. Effort controls the budget separately.";
   const familyNote = overrideNote + (family === "grok"
-    ? " Grok 4.6 family is active for delegated children. `/model-routing grok` is session-only; `/model-routing grok --default` writes the durable project family. Main Pi keeps its current model unless launched with --model."
-    : " Codex family is the shipped default. `/model-routing grok` switches children for this session; `/model-routing grok --default` persists Grok 4.6 for new sessions.");
+    ? ` Grok 4.6 family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children; \`/model-routing grok --default\` writes the durable project family.`
+    : ` Codex family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children to Grok 4.6; \`--default\` persists the project family.`);
   return `Adaptive delegation routing: prefer first-party delegate_task for ordinary specialist work and workbench_agent_start when a persistent read-only agent must remain steerable or may ask the parent a question. Classify each lane independently from complexity, uncertainty, risk, breadth, and verification cost; role is only a prior. Balanced routes are light=${routes.light.model}, standard=${routes.standard.model}, heavy=${routes.heavy.model}. A hard scout/recon lane can and should reach Sol or Grok 4.6 high; never use Spark for image/visual work. Before launch, show one compact line with role, model/thinking, reason, and read-only budget. Read-only limits are 8 turns/30 tools (light), 16/60 (standard), or 30/120 (heavy), with stop-and-synthesize guidance. Persistent mutation-capable agents are not enabled; use the existing single-writer delegate_task path under its lease. Do not use the external subagent tool or workflowScript; first-party Workbench agents are the runtime.${familyNote}${fixed}`;
 }
 
@@ -240,8 +247,8 @@ export function registerModelRouting(
   pi: ExtensionAPI,
   report?: (title: string, body: string) => void,
 ): ModelRoutingController {
-  let state: ModelRoutingState = { ...BALANCED_ROUTING_STATE };
-  let durableDefaults: DurableRoutingDefaults = { policy: "balanced", family: "codex" };
+  let state: ModelRoutingState = { policy: "balanced", family: "grok" };
+  let durableDefaults: DurableRoutingDefaults = { policy: "balanced", family: "grok" };
 
   const updateStatus = (ctx: ExtensionContext): void => {
     if (ctx.hasUI) ctx.ui.setStatus("model-routing", `route:${stateLabel(state)}`);
@@ -263,8 +270,21 @@ export function registerModelRouting(
     updateStatus(ctx);
   };
 
+  const applyParentModel = async (ctx: ExtensionContext, next: ModelRoutingState): Promise<void> => {
+    const route = parentRouteForState(next);
+    let model: unknown;
+    try {
+      model = ctx.modelRegistry.find(route.provider, route.id);
+    } catch {
+      return;
+    }
+    if (!model) return;
+    if (typeof pi.setModel === "function") await pi.setModel(model as never);
+    if (typeof pi.setThinkingLevel === "function") pi.setThinkingLevel(route.thinking);
+  };
+
   const showState = (ctx: ExtensionContext): void => {
-    const body = `${stateDescription(state)}\n\n- \`/model-routing\`: interactive customize menu in the TUI\n- \`balanced\` / \`economy\` / \`quality\`: adaptive child routing in the active family\n- \`codex\` / \`grok\`: session family; add \`--default\` to persist for new sessions\n- \`fixed <model-or-alias>\`: session-only fixed child route (\`spark\`, \`luna\`, \`terra\`, \`sol\`, \`grok\`, or an available \`openai-codex/<model>\` / \`xai/<model>[:thinking]\`); Main Pi keeps its current model\n- \`reset\`: restore the durable project route (${durableDefaults.family} ${durableDefaults.policy}) for this session`;
+    const body = `${stateDescription(state)}\n\n- \`/model-routing\`: interactive customize menu in the TUI\n- \`balanced\` / \`economy\` / \`quality\`: adaptive child routing in the active family\n- \`codex\` / \`grok\`: move Main Pi and children; add \`--default\` to persist for new sessions in this project\n- \`fixed <model-or-alias>\`: session route for Main Pi and children (\`spark\`, \`luna\`, \`terra\`, \`sol\`, \`grok\`, or an available \`openai-codex/<model>\` / \`xai/<model>[:thinking]\`)\n- \`reset\`: restore the durable project route (${durableDefaults.family} ${durableDefaults.policy}) for this session`;
     if (report) report("Model routing", body);
     else if (ctx.hasUI) ctx.ui.notify(body, "info");
   };
@@ -278,7 +298,7 @@ export function registerModelRouting(
     }
   };
 
-  const applyAdaptive = (ctx: ExtensionContext, next: ModelRoutingState, makeDefault: boolean): void => {
+  const applyAdaptive = async (ctx: ExtensionContext, next: ModelRoutingState, makeDefault: boolean): Promise<void> => {
     if (makeDefault) {
       persistDefault(ctx, {
         policy: next.policy === "fixed" ? durableDefaults.policy : next.policy,
@@ -286,6 +306,7 @@ export function registerModelRouting(
       });
     }
     applyState(ctx, next, true);
+    await applyParentModel(ctx, next);
     showState(ctx);
   };
 
@@ -296,7 +317,7 @@ export function registerModelRouting(
   );
 
   const runCustomizeMenu = async (ctx: ExtensionContext): Promise<void> => {
-    const familyLabel = await ctx.ui.select("Child model family", [...ROUTING_MENU_FAMILIES]);
+    const familyLabel = await ctx.ui.select("Model family (Main Pi and children)", [...ROUTING_MENU_FAMILIES]);
     if (!familyLabel) return;
     const family = parseRoutingMenuFamily(familyLabel);
     if (!family) return;
@@ -308,11 +329,11 @@ export function registerModelRouting(
     if (!scopeLabel) return;
     const makeDefault = parseRoutingMenuScope(scopeLabel);
     if (makeDefault === undefined) return;
-    applyAdaptive(ctx, durableState({ policy, family }), makeDefault);
+    await applyAdaptive(ctx, durableState({ policy, family }), makeDefault);
   };
 
   pi.registerCommand("model-routing", {
-    description: "Customize child model routing with a menu, session flags, or --default to persist the project family",
+    description: "Set Main Pi and child routing; --default persists the project family",
     handler: async (rawArgs, ctx) => {
       const parsed = parseModelRoutingCommand(rawArgs);
       if (parsed.kind === "open") {
@@ -333,16 +354,18 @@ export function registerModelRouting(
         return;
       }
       if (parsed.kind === "reset") {
-        applyState(ctx, durableState(durableDefaults), true);
+        const next = durableState(durableDefaults);
+        applyState(ctx, next, true);
+        await applyParentModel(ctx, next);
         showState(ctx);
         return;
       }
       if (parsed.kind === "policy") {
-        applyAdaptive(ctx, durableState({ policy: parsed.policy, family: routingFamily(state) }), parsed.makeDefault);
+        await applyAdaptive(ctx, durableState({ policy: parsed.policy, family: routingFamily(state) }), parsed.makeDefault);
         return;
       }
       if (parsed.kind === "family") {
-        applyAdaptive(ctx, durableState({ policy: currentAdaptivePolicy(), family: parsed.family }), parsed.makeDefault);
+        await applyAdaptive(ctx, durableState({ policy: currentAdaptivePolicy(), family: parsed.family }), parsed.makeDefault);
         return;
       }
       if (parsed.kind === "usage") {
@@ -360,6 +383,7 @@ export function registerModelRouting(
         return;
       }
       applyState(ctx, next, true);
+      await applyParentModel(ctx, next);
       showState(ctx);
     },
   });
@@ -375,6 +399,7 @@ export function registerModelRouting(
       if (fixedRouteIsAvailable(ctx, restored)) state = restored;
       else if (ctx.hasUI) ctx.ui.notify("The saved fixed child route is no longer available; restored the durable adaptive policy.", "warning");
     }
+    await applyParentModel(ctx, state);
     updateStatus(ctx);
   });
 
@@ -387,12 +412,13 @@ export function registerModelRouting(
       return { action: "handled" as const };
     }
     applyState(ctx, next, true);
+    await applyParentModel(ctx, next);
     appendReceipt(stateDescription(state));
     return { action: "handled" as const };
   });
 
   pi.on("before_agent_start", async (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${nativeRoutingGuidance(state)}`,
+    systemPrompt: `${event.systemPrompt}\n\n${WORKBENCH_OPERATING_CONTRACT}\n\n${nativeRoutingGuidance(state)}`,
   }));
 
   pi.on("tool_call", (event) => {

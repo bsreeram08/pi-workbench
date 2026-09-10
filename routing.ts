@@ -162,11 +162,35 @@ export function normalizeRoutingPolicy(value: unknown): Exclude<RoutingPolicy, "
 }
 
 export function normalizeRoutingFamily(value: unknown): RoutingFamily {
-  return value === "grok" ? "grok" : "codex";
+  return value === "codex" ? "codex" : "grok";
 }
 
 export function routingFamily(state: ModelRoutingState | undefined): RoutingFamily {
   return state?.family === "grok" ? "grok" : "codex";
+}
+
+export interface ParentModelRoute {
+  provider: string;
+  id: string;
+  thinking: RoutingThinking;
+}
+
+/** Main Pi follows the active family or fixed route. Adaptive policy does not change parent thinking. */
+export function parentRouteForState(state: ModelRoutingState): ParentModelRoute {
+  if (state.policy === "fixed" && state.fixed) {
+    const bare = state.fixed.model.replace(/:(?:low|medium|high)$/, "");
+    const slash = bare.indexOf("/");
+    if (slash > 0) {
+      return {
+        provider: bare.slice(0, slash),
+        id: bare.slice(slash + 1),
+        thinking: state.fixed.thinking,
+      };
+    }
+  }
+  return routingFamily(state) === "grok"
+    ? { provider: "xai", id: "grok-4.6", thinking: "high" }
+    : { provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high" };
 }
 
 export function splitModelRoute(model: string, fallbackThinking: RoutingThinking = "medium"): FixedModelRoute {

@@ -20,6 +20,7 @@ import {
   BALANCED_ROUTES,
   GROK_BALANCED_ROUTES,
   GROK_PRIMARY_ROUTE,
+  parentRouteForState,
   READ_ONLY_BUDGETS,
   classifyRoutingEffort,
   formatRoutingReceipt,
@@ -129,6 +130,21 @@ describe("adaptive model routing", () => {
     expect(classifyRoutingEffort("Implement an API change and verify compatibility.", "worker").effort).toBe("standard");
     expect(classifyRoutingEffort("Plan a security migration across services.", "scout").effort).toBe("heavy");
   });
+
+  test("maps family and fixed routes onto the Main Pi parent", () => {
+    expect(parentRouteForState({ policy: "balanced", family: "grok" })).toEqual({
+      provider: "xai", id: "grok-4.6", thinking: "high",
+    });
+    expect(parentRouteForState({ policy: "economy" })).toEqual({
+      provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high",
+    });
+    expect(parentRouteForState({ policy: "fixed", fixed: GROK_PRIMARY_ROUTE })).toEqual({
+      provider: "xai", id: "grok-4.6", thinking: "high",
+    });
+    expect(parentRouteForState({ policy: "fixed", fixed: BALANCED_ROUTES.heavy })).toEqual({
+      provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high",
+    });
+  });
 });
 
 describe("session routing controls", () => {
@@ -174,12 +190,13 @@ describe("session routing controls", () => {
     expect(restoreModelRoutingState({ version: 2, state: { policy: "quality" } })).toEqual({ policy: "balanced" });
   });
 
-  test("persists command and natural-language overrides without calling parent model setters", async () => {
+  test("family and fixed routes move Main Pi with children", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-workbench-parent-route-"));
     const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
     const entries: Array<{ customType: string; data: unknown }> = [];
-    let parentModelSets = 0;
-    let parentThinkingSets = 0;
+    const parentModels: string[] = [];
+    const parentThinking: string[] = [];
     const pi = {
       registerCommand(name: string, command: { handler: (args: string, ctx: any) => Promise<void> }) {
         commands.set(name, command.handler);
@@ -189,12 +206,15 @@ describe("session routing controls", () => {
       },
       appendEntry(customType: string, data: unknown) { entries.push({ customType, data }); },
       registerEntryRenderer() {},
-      setModel: async () => { parentModelSets++; return true; },
-      setThinkingLevel: () => { parentThinkingSets++; },
+      setModel: async (model: { provider: string; id: string }) => {
+        parentModels.push(`${model.provider}/${model.id}`);
+        return true;
+      },
+      setThinkingLevel: (level: string) => { parentThinking.push(level); },
     } as any;
     registerModelRouting(pi);
     const ctx = {
-      cwd: process.cwd(),
+      cwd: root,
       hasUI: false,
       ui: { setStatus() {}, notify() {} },
       sessionManager: { getBranch: () => [] },
@@ -211,6 +231,7 @@ describe("session routing controls", () => {
       },
     };
 
+    try {
     await handlers.get("session_start")?.[0]?.({}, ctx);
     await commands.get("model-routing")?.("fixed sol", ctx);
     await handlers.get("input")?.[0]?.({ text: "use terra for everything this session" }, ctx);
@@ -222,15 +243,26 @@ describe("session routing controls", () => {
 
     expect(entries.filter((entry) => entry.customType === MODEL_ROUTING_ENTRY)).toHaveLength(4);
     expect(entries.filter((entry) => entry.customType === MODEL_ROUTING_RECEIPT_ENTRY)).toHaveLength(1);
-    expect(parentModelSets).toBe(0);
-    expect(parentThinkingSets).toBe(0);
-
+    expect(parentModels).toEqual([
+      "xai/grok-4.6",
+      "openai-codex/gpt-5.6-sol",
+      "openai-codex/gpt-5.6-terra",
+      "xai/grok-4.6",
+      "xai/grok-4.6",
+    ]);
+    expect(parentThinking).toEqual(["high", "high", "medium", "high", "high"]);
     const input: Record<string, unknown> = { agent: "scout", task: "Inspect the API." };
     handlers.get("tool_call")?.[0]?.({ toolName: "subagent", input }, ctx);
     expect(input.model).toBeUndefined();
     expect(entries.filter((entry) => entry.customType === MODEL_ROUTING_RECEIPT_ENTRY).at(-1)).toMatchObject({
       data: { content: expect.stringContaining("delegate_task") },
     });
+    const prompt = await handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base" }, ctx) as { systemPrompt: string };
+    expect(prompt.systemPrompt).toContain("./.worktrees/");
+    expect(prompt.systemPrompt).toContain("Do not invent openai-codex/gpt-6-astra");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -301,9 +333,10 @@ describe("legacy routing config normalization", () => {
     expect(config.workflowFastModel).toBe("legacy/fast:low");
     expect(config.workflowPlanningModel).toBe("legacy/plan:high");
     expect(config.modelRoutingPolicy).toBe("balanced");
-    expect(config.modelRoutingFamily).toBe("codex");
+    expect(config.modelRoutingFamily).toBe("grok");
     expect(normalizeConfig({ modelRoutingPolicy: "quality" }).modelRoutingPolicy).toBe("quality");
     expect(normalizeConfig({ modelRoutingPolicy: "fixed" }).modelRoutingPolicy).toBe("balanced");
+    expect(normalizeConfig({ modelRoutingFamily: "codex" }).modelRoutingFamily).toBe("codex");
     expect(normalizeConfig({ modelRoutingFamily: "grok" }).modelRoutingFamily).toBe("grok");
   });
 });
@@ -349,7 +382,8 @@ describe("durable family defaults and customize menu", () => {
     try {
       await handlers.get("session_start")?.[0]?.({}, ctx);
       await commands.get("model-routing")?.("grok", ctx);
-      expect(readDurableRouting(root)).toEqual({ policy: "balanced", family: "codex" });
+      expect(existsSync(join(root, ".pi", "pi-workbench", "config.json"))).toBe(false);
+      expect(readDurableRouting(root)).toEqual({ policy: "balanced", family: "grok" });
       await commands.get("model-routing")?.("grok --default", ctx);
       expect(readDurableRouting(root)).toEqual({ policy: "balanced", family: "grok" });
       const written = JSON.parse(readFileSync(join(root, ".pi", "pi-workbench", "config.json"), "utf8"));

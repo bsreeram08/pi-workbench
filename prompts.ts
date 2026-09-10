@@ -1,10 +1,13 @@
 import type { AgentResult, AgentSpec } from "./types.ts";
+import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
 
 export function buildSpecialistSystemPrompt(agent: AgentSpec, _reprompterPath: string, implementation = false): string {
   return `You are the ${agent.title} in Pi Workbench.
 
 Role: ${agent.description}
+
+${WORKBENCH_OPERATING_CONTRACT}
 
 This is a project-scoped council. The user's stated intent is the source of truth. Clarify missing details and provide evidence; distinguish your recommendations from what the user requested.
 

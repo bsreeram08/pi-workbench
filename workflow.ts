@@ -1073,14 +1073,14 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       "Use delegate_task when isolated specialist context or independent parallel analysis materially improves a complex task; keep simple work in the main Pi agent.",
       "Main Pi acts as Coordinator: delegate bounded outcomes with context and success criteria, then verify returned claims against the actual project.",
       "Before delegating, classify every lane from complexity, uncertainty, risk, breadth, and verification cost. Role is only a prior: hard scout/recon work may require Sol. Set effort explicitly when you have made that judgment; otherwise use auto.",
-      "Honor a requested model with the model parameter, for example openai-codex/gpt-6-astra:high. This overrides session routing for that delegation only; effort still controls its work budget. Unavailable models fail without substitution.",
+      "Honor a requested model with the model parameter (exact provider/model[:thinking] the user asked for). This overrides session routing for that delegation only; effort still controls its work budget. Unavailable models fail without substitution. Do not invent a model they did not request.",
       "Show the pre-launch route receipt. Never use Spark for visual/image work. Never run Implementer or Task Implementer in a parallel delegate_task batch or hard-cap mutation-capable work.",
     ],
     parameters: Type.Object({
       agent: Type.Optional(StringEnum(WORKFLOW_AGENT_IDS, { description: "Agent for single delegation" })),
       task: Type.Optional(Type.String({ description: "Task for single delegation" })),
       effort: Type.Optional(RoutingEffortSchema),
-      model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] for single delegation, e.g. openai-codex/gpt-6-astra:high" })),
+      model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] the user requested for single delegation" })),
       tasks: Type.Optional(Type.Array(TaskItemSchema, { minItems: 1, maxItems: 6, description: "Read-only tasks to run in parallel" })),
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<DelegationToolDetails>> {
