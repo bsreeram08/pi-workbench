@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -8,6 +9,25 @@ import { DEFAULT_CONFIG } from "../config.ts";
 import { getWorkflowPaths, loadCurrentWorkflowPlan, saveWorkflowPlan } from "../workflow-state.ts";
 import { runCheck, workspaceSnapshot } from "../verification.ts";
 import { setTaskModelPreference } from "../task-model-policy.ts";
+import { canonicalWorkflowFindingsMarker } from "../workflow-findings.ts";
+
+const PASSING_CODE_REVIEW = `${canonicalWorkflowFindingsMarker({ schemaVersion: 1, findings: [] })}\n<code-verdict>PASS</code-verdict>`;
+
+function changesRequiredReview(source = "original source"): string {
+  const evidenceDigest = `sha256:${createHash("sha256").update(source.split("\n").slice(0, 1).join("\n"), "utf8").digest("hex")}`;
+  return `${canonicalWorkflowFindingsMarker({
+    schemaVersion: 1,
+    findings: [{
+      id: "missing-coverage",
+      severity: "blocker",
+      path: "code.txt",
+      startLine: 1,
+      endLine: 1,
+      evidenceDigest,
+      summary: "Implementation lacks regression coverage.",
+    }],
+  })}\n<code-verdict>CHANGES_REQUIRED</code-verdict>`;
+}
 
 async function setup(verification: (call: number) => void | string | Promise<void | string> = () => {}, implementationResult: { exitCode?: number; cancelled?: boolean } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "execution-recovery-"));
@@ -36,7 +56,7 @@ async function setup(verification: (call: number) => void | string | Promise<voi
     verify: async () => {
       const verdict = await verification(++calls);
       const check = await runCheck({ argv: [process.execPath, "-e", "process.exit(0)"], criterionIds: ["behavior"], kind: "automated-test" }, { projectRoot: root, evidenceDir: path.join(root, ".pi/pi-workbench/checks"), runId: "native-test" });
-      return { reviews: [{ agentId: "technical-reviewer", title: "Review", exitCode: 0, output: verdict ?? "<code-verdict>PASS</code-verdict>" }], verification: { agentId: "verifier", title: "Verification", exitCode: 0, output: "<verified/>", verification: { receipts: [check.receipt], snapshot: await workspaceSnapshot(root) } } };
+      return { reviews: [{ agentId: "technical-reviewer", title: "Review", exitCode: 0, output: verdict ?? PASSING_CODE_REVIEW }], verification: { agentId: "verifier", title: "Verification", exitCode: 0, output: "<verified/>", verification: { receipts: [check.receipt], snapshot: await workspaceSnapshot(root) } } };
     },
     report() {},
   });
@@ -111,6 +131,16 @@ test("parent read becomes stale after mutation and malformed review gets only fr
   } finally { await item.cleanup(); }
 });
 
+test("PASS without findings envelope is protocol-invalid", async () => {
+  const item = await setup(() => "<code-verdict>PASS</code-verdict>");
+  try {
+    const evidenceIds = await item.inspect();
+    expect((await item.run("verify", { evidenceIds })).details.status).toBe("verification_protocol_invalid");
+    expect((await item.state())!.execution!.review!.status).toBe("interrupted");
+    expect(item.calls()).toBe(1);
+  } finally { await item.cleanup(); }
+});
+
 test("cancelled and rejected verification cannot recover", async () => {
   const controller = new AbortController();
   const cancelled = await setup(() => { controller.abort(); });
@@ -122,7 +152,7 @@ test("cancelled and rejected verification cannot recover", async () => {
     await expect(cancelled.run("recover", { evidenceIds })).rejects.toThrow("no longer executing");
     expect(cancelled.calls()).toBe(1);
   } finally { await cancelled.cleanup(); }
-  const rejected = await setup(() => "<code-verdict>CHANGES_REQUIRED</code-verdict>");
+  const rejected = await setup(() => changesRequiredReview());
   try {
     const evidenceIds = await rejected.inspect();
     expect((await rejected.run("verify", { evidenceIds })).details.status).toBe("changes_required");
@@ -182,6 +212,14 @@ test("implementation handoff observes dirty baseline and honors durable UI model
     expect(response.details.handoff.scopeAnomalies).toEqual([]);
     expect(response.details.handoff.termination).toBe("completed");
     expect(response.details.handoff.changes.authorship).toBe("unattributed");
+    expect(response.details.handoff.impact.status).toBe("available");
+    expect(response.details.handoff.impact.changedPaths).toEqual(["code.txt"]);
+    const directory = path.join(item.workflowPaths.runs, item.id);
+    const impactName = (await fs.readdir(directory)).find((name) => name.startsWith("impact-"));
+    expect(impactName).toBeDefined();
+    const stored = JSON.parse(await fs.readFile(path.join(directory, impactName!), "utf8"));
+    expect(stored.status).toBe("available");
+    expect(stored.changedPaths).toEqual(["code.txt"]);
   } finally { await item.cleanup(); }
 });
 

@@ -63,6 +63,7 @@ import { getCommunityKnowledgePath } from "./skill-evolution.ts";
 import { runSingleAgent } from "./subagents.ts";
 import type { AgentRunContext } from "./agent-run-manager.ts";
 import { createHash } from "node:crypto";
+import * as path from "node:path";
 import {
   assertMandatoryAgentBatch,
   assertMandatoryAgentResult,
@@ -73,7 +74,9 @@ import { withExclusiveLease } from "./exclusive-lease.ts";
 import { createWorkflowLifecycleEvent, WORKFLOW_LIFECYCLE_EVENT, type WorkflowLifecycleErrorCode, type WorkflowLifecyclePhase } from "./workflow-lifecycle.ts";
 import { MODEL_ROUTING_RECEIPT_ENTRY } from "./model-routing.ts";
 import type { AgentResult, Exec } from "./types.ts";
-import { checkPassed } from "./verification.ts";
+import { checkPassed, workspaceSnapshot } from "./verification.ts";
+import { captureSupervisionInventory, compareSupervisionInventories } from "./supervision-evidence.ts";
+import { buildImpactReceipt, loadLatestImpactReceipt, type ImpactReceipt } from "./impact-receipt.ts";
 import { registerCoordinatorPlanning } from "./coordinator-planning.ts";
 import { registerCoordinatorExecution } from "./coordinator-execution.ts";
 import { registerCoordinatorModelPolicy } from "./coordinator-model-policy.ts";
@@ -134,6 +137,24 @@ const TaskItemSchema = Type.Object({
 
 function now(): string {
   return new Date().toISOString();
+}
+
+async function hostImpactAfterWriter(
+  root: string,
+  before: Awaited<ReturnType<typeof captureSupervisionInventory>>,
+  workflowPaths: ReturnType<typeof getWorkflowPaths>,
+  planId: string,
+  label: string,
+): Promise<ImpactReceipt> {
+  let snapshot = "";
+  try { snapshot = await workspaceSnapshot(root); } catch { /* keep empty */ }
+  const compared = compareSupervisionInventories(before, await captureSupervisionInventory(root));
+  const changes = compared.status === "available"
+    ? compared
+    : { status: "unavailable" as const, error: "pipeline-inventory-not-captured" };
+  const impact = await buildImpactReceipt({ root, snapshot, changes });
+  await writeWorkflowRunArtifact(workflowPaths, planId, `impact-${label}.md`, JSON.stringify(impact, null, 2));
+  return impact;
 }
 
 function progressFor(
@@ -688,6 +709,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     }
 
     progress.update("Implementer implementing the approved plan");
+    const implementBefore = await captureSupervisionInventory(root);
     let implementation = await runRole(
       root,
       config,
@@ -702,6 +724,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     );
     throwIfWorkflowCancelled(signal);
     await writeWorkflowRunArtifact(workflowPaths, state.id, "implementation-1.md", implementation.output);
+    let impact = await hostImpactAfterWriter(root, implementBefore, workflowPaths, state.id, "1");
 
     for (let attempt = 0; attempt <= config.workflowMaxFixLoops; attempt++) {
       throwIfWorkflowCancelled(signal);
@@ -714,7 +737,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       const reviews = await runRoleBatch(
         root,
         config,
-        reviewRoles(config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, implementation.output, state.packet) })),
+        reviewRoles(config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, implementation.output, state.packet, impact) })),
         state.task,
         progress,
         `execution-review-${cycle}`,
@@ -785,6 +808,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       }
 
       progress.update(`Implementer fixing cycle ${cycle}`);
+      const fixBefore = await captureSupervisionInventory(root);
       implementation = await runRole(
         root,
         config,
@@ -806,6 +830,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       );
       throwIfWorkflowCancelled(signal);
       await writeWorkflowRunArtifact(workflowPaths, state.id, `implementation-${cycle + 1}.md`, implementation.output);
+      impact = await hostImpactAfterWriter(root, fixBefore, workflowPaths, state.id, String(cycle + 1));
     }
     return false;
   }
@@ -1051,8 +1076,13 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     },
     verify(project, state, assessment, model, signal, ctx) {
       return coordinatorRole(state, ctx, async (progress) => {
+        let impact: ImpactReceipt | undefined;
+        try {
+          const snapshot = await workspaceSnapshot(project.root);
+          impact = await loadLatestImpactReceipt(path.join(project.workflowPaths.runs, state.id), snapshot);
+        } catch { /* Review proceeds without a receipt when the artifact cannot be loaded. */ }
         const reviews = await runRoleBatch(project.root, project.config,
-          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\nPreserve deliberate design decisions; reject only concrete defects.` : "", state.packet), model })),
+          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\nPreserve deliberate design decisions; reject only concrete defects.` : "", state.packet, impact), model })),
           state.task, progress, "coordinator-review", "Independent review", signal);
         const verification = await runRole(project.root, project.config, "quality-reviewer", state.task,
           state.packet ? buildPacketVerificationTask(state.task, state.plan, "", state.packet) : buildIndependentVerificationTask(state.task, state.plan, ""),

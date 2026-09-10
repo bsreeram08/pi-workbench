@@ -325,7 +325,9 @@ describe("Pi workflow routing", () => {
     ];
     expect(planReviewsPass(passing)).toBe(true);
     expect(planReviewsPass(passing.slice(0, 1))).toBe(false);
-    expect(codeReviewsPass(passing.map((item) => ({ ...item, output: "<code-verdict>PASS</code-verdict>" })))).toBe(true);
+    const passingCode = "<workflow-findings>{\"schemaVersion\":1,\"findings\":[]}</workflow-findings>\n<code-verdict>PASS</code-verdict>";
+    expect(codeReviewsPass(passing.map((item) => ({ ...item, output: "<code-verdict>PASS</code-verdict>" })))).toBe(false);
+    expect(codeReviewsPass(passing.map((item) => ({ ...item, output: passingCode })))).toBe(true);
 
     const readers = [resolveWorkflowAgent("quality-reviewer", DEFAULT_CONFIG)!, resolveWorkflowAgent("technical-reviewer", DEFAULT_CONFIG)!];
     expect(validateParallelWorkflowAgents(readers)).toBeUndefined();

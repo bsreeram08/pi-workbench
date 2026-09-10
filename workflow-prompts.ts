@@ -1,5 +1,7 @@
 import type { WorkflowAgentProfile } from "./workflow-agents.ts";
 import { formatConceptGuidance } from "./workflow-concepts.ts";
+import { codeReviewEnvelopeValid } from "./workflow-findings.ts";
+import { formatImpactReceiptForReview, type ImpactReceipt } from "./impact-receipt.ts";
 import { formatWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
 import type { AgentResult } from "./types.ts";
 import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
@@ -177,6 +179,8 @@ End the trimmed plan with exactly one canonical one-line marker and no text afte
 
 Marker rules: exact field order shown; scope and nonGoals each contain 1-16 unique trimmed one-line strings of at most 300 UTF-8 bytes; acceptanceCriteria contains 1-16 entries in verification order. Every criterion has exactly id, description, requiredEvidenceKinds in that order. IDs are unique kebab-case strings starting with a letter and at most 64 bytes; descriptions are trimmed one-line strings at most 500 bytes; requiredEvidenceKinds contains 1-5 unique values from automated-test, static-analysis, build, runtime-observation, artifact-inspection. Text must not contain control characters, U+2028, U+2029, or unpaired surrogates. The marker JSON must be canonical compact JSON with no duplicate, reordered, or unknown fields. Never include commands or executable orchestration in the packet. The Markdown plan may still name project verification command guidance.`;
 
+export const WORKFLOW_FINDINGS_FORMAT = `Marker rules: exact field order shown; findings contains 0-32 entries. Every finding has exactly id, severity, path, startLine, endLine, evidenceDigest, summary in that order. IDs are unique kebab-case strings starting with a letter and at most 64 bytes. severity is blocker, warning, or note. path is a project-relative file path at most 500 UTF-8 bytes with no \`..\`, empty, or absolute segments. startLine is an integer ≥ 1; endLine is an integer ≥ startLine. evidenceDigest is sha256: plus 64 lowercase hex of the UTF-8 bytes of lines startLine through endLine joined by a newline. summary is a trimmed one-line string at most 500 bytes. Text must not contain control characters, U+2028, U+2029, or unpaired surrogates. The marker JSON must be canonical compact JSON with no duplicate, reordered, or unknown fields. PASS may include notes only; CHANGES_REQUIRED and BLOCKED require at least one finding. A missing, fenced, reordered, contradictory, or ungrounded envelope is a protocol failure, not a product verdict.`;
+
 export function buildPlanReviewTask(
   role: "quality-reviewer" | "technical-reviewer",
   task: string,
@@ -298,11 +302,13 @@ export function buildCodeReviewTask(
   plan: string,
   implementation: string,
   packet?: WorkflowTaskPacket,
+  impact?: ImpactReceipt,
 ): string {
   const focus = role === "quality-reviewer"
     ? "Check exact conformance to the approved plan, regression coverage, repository standards, and unsupported completion claims."
     : "Check architecture, correctness, edge cases, failure handling, security/reliability consequences, and accidental complexity.";
-  return `Review the actual current working tree after implementation. You are read-only.
+  const receipt = impact ? `${formatImpactReceiptForReview(impact)}\nDo not cite this receipt as evidenceDigest; ground findings against current file line ranges.\n\n` : "";
+  return `${receipt}Review the actual current working tree after implementation. You are read-only.
 
 USER TASK:
 ${task}
@@ -312,16 +318,19 @@ ${plan}
 ${packetBindingPrompt(packet)}
 ${focus}
 
-Form your own assessment from the request, acceptance criteria, code, and tests. The implementer's self-assessment is deliberately omitted. Inspect the real diff and run safe checks when useful. Findings must name severity, path, evidence, and concrete fix. Return:
+Form your own assessment from the request, acceptance criteria, code, and tests. The implementer's self-assessment is deliberately omitted. Inspect the real diff and run safe checks when useful. Findings must name severity, path, evidence, and concrete fix. Quote a contiguous line range from a current project file; the host will hash those lines. Return:
 ## Verdict
 ## Findings
 ## Verification Gaps
 ## Evidence
-End with exactly one marker:
+End the output with the canonical one-line findings marker immediately before exactly one terminal verdict, with only a single newline between them and no text after the verdict:
+<workflow-findings>{"schemaVersion":1,"findings":[{"id":"kebab-case-id","severity":"blocker","path":"src/example.ts","startLine":1,"endLine":1,"evidenceDigest":"sha256:...","summary":"..."}]}</workflow-findings>
 <code-verdict>PASS</code-verdict>
 <code-verdict>CHANGES_REQUIRED</code-verdict>
 or
-<code-verdict>BLOCKED</code-verdict>`;
+<code-verdict>BLOCKED</code-verdict>
+
+${WORKFLOW_FINDINGS_FORMAT}`;
 }
 
 export function buildIndependentVerificationTask(task: string, plan: string, implementation: string): string {
@@ -488,7 +497,7 @@ export function parsePlanVerdict(output: string): PlanVerdict {
 export function reviewProtocolValid(output: string, kind: "plan" | "code"): boolean {
   return kind === "plan"
     ? uniqueTerminalVerdict(output, "plan-verdict", /<plan-verdict>\s*(OKAY|REJECT)\s*<\/plan-verdict>/g) !== undefined
-    : uniqueTerminalVerdict(output, "code-verdict", /<code-verdict>\s*(PASS|CHANGES_REQUIRED|BLOCKED)\s*<\/code-verdict>/g) !== undefined;
+    : codeReviewEnvelopeValid(output);
 }
 
 export function parseCodeVerdict(output: string): CodeVerdict {
@@ -501,7 +510,9 @@ export function planReviewsPass(results: AgentResult[], required: 1 | 2 = 2): bo
 }
 
 export function codeReviewsPass(results: AgentResult[], required: 1 | 2 = 2): boolean {
-  return hasIndependentReviewLanes(results, required) && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim() && parseCodeVerdict(result.output) === "PASS");
+  return hasIndependentReviewLanes(results, required)
+    && results.every((result) => !result.cancelled && result.exitCode === 0 && result.output.trim()
+      && reviewProtocolValid(result.output, "code") && parseCodeVerdict(result.output) === "PASS");
 }
 
 function hasIndependentReviewLanes(results: AgentResult[], required: 1 | 2): boolean {

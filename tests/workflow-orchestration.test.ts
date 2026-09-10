@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { observedChecks } from "./fixtures/check-evidence.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { canonicalWorkflowFindingsMarker } from "../workflow-findings.ts";
 import { WorkbenchDashboardController } from "../dashboard-controller.ts";
 import { ExclusiveLeaseError } from "../exclusive-lease.ts";
 import { registerWorkflow } from "../workflow.ts";
@@ -93,6 +95,24 @@ function agentResult(agent: AgentSpec, output = "valid output", overrides: Parti
   return { agentId: agent.id, title: agent.title, output, exitCode: 0, ...overrides };
 }
 
+const PASSING_CODE_REVIEW = `${canonicalWorkflowFindingsMarker({ schemaVersion: 1, findings: [] })}\n<code-verdict>PASS</code-verdict>`;
+
+function changesRequiredReview(source: string, path = "hero.ts"): string {
+  const evidenceDigest = `sha256:${createHash("sha256").update(source.split("\n").slice(0, 1).join("\n"), "utf8").digest("hex")}`;
+  return `${canonicalWorkflowFindingsMarker({
+    schemaVersion: 1,
+    findings: [{
+      id: "missing-coverage",
+      severity: "blocker",
+      path,
+      startLine: 1,
+      endLine: 1,
+      evidenceDigest,
+      summary: "Implementation lacks regression coverage.",
+    }],
+  })}\n<code-verdict>CHANGES_REQUIRED</code-verdict>`;
+}
+
 const PACKET_DECLARATION: WorkflowTaskPacketDeclaration = {
   schemaVersion: 1,
   scope: ["Implement packet-aware workflow completion."],
@@ -158,7 +178,7 @@ function executionResult(agent: AgentSpec, task: string, verifierOutput: string)
   if (agent.id === "execution-manager") return agentResult(agent, "## Blockers\nNone");
   if (agent.id === "implementer") return agentResult(agent, "Implementation complete.");
   if (task.includes("independent completion gate")) return agentResult(agent, verifierOutput, { verification: observedChecks() });
-  return agentResult(agent, "<code-verdict>PASS</code-verdict>");
+  return agentResult(agent, PASSING_CODE_REVIEW);
 }
 
 describe("Main Pi planning control", () => {
@@ -241,7 +261,9 @@ describe("Main Pi planning control", () => {
           for (const receipt of evidence.receipts) { receipt.snapshotBefore = snapshot; receipt.snapshotAfter = snapshot; }
           return agentResult(agent, packetVerification(packet), { verification: evidence });
         }
-        return agentResult(agent, outcome === "rejected" ? "<code-verdict>CHANGES_REQUIRED</code-verdict>" : "<code-verdict>PASS</code-verdict>");
+        return agentResult(agent, outcome === "rejected"
+          ? changesRequiredReview("export const hero = 'accessible navigation';\n", "hero.ts")
+          : PASSING_CODE_REVIEW);
       }, { coordinator: true });
       try {
         packet = await approvedPacketState(item.root);

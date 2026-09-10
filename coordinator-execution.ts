@@ -2,13 +2,16 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { createHash, randomUUID } from "node:crypto";
+import * as path from "node:path";
 import type { WorkbenchConfig } from "./config.ts";
+import { buildImpactReceipt, readCachedImpactReceipt } from "./impact-receipt.ts";
 import type { AgentResult } from "./types.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { requireAvailableDelegationModel } from "./workflow-agents.ts";
 import { throwIfWorkflowCancelled } from "./agent-result-guard.ts";
 import { checkPassed, workspaceSnapshot } from "./verification.ts";
 import { codeReviewsPass, legacyVerificationPasses, reviewProtocolValid, parseCodeVerdict } from "./workflow-prompts.ts";
+import { groundWorkflowFindings, parseWorkflowFindings } from "./workflow-findings.ts";
 import { readReviewContinuity, summarizeReviewContinuity } from "./review-continuity.ts";
 import { evaluateWorkflowVerification, packetVerificationPasses } from "./workflow-task-packet.ts";
 import { startWorkflowActivity } from "./workflow-activity.ts";
@@ -170,11 +173,19 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           catch (error) { failure = error; }
           if (implementation && (implementation.cancelled || implementation.exitCode !== 0 || !implementation.output.trim())) failure = new Error(implementation.error ?? "Writer did not return a successful nonblank result.");
           const changes = compareSupervisionInventories(before, await captureSupervisionInventory(project.root));
+          let snapshot = "";
+          try { snapshot = await workspaceSnapshot(project.root); } catch { /* Receipt still records the observed change list. */ }
+          const runDir = path.join(project.workflowPaths.runs, state.id);
+          const changedPaths = changes.status === "available" ? changes.changes.map((item) => item.path) : [];
+          const impact = changes.status === "available"
+            ? await readCachedImpactReceipt(runDir, snapshot, changedPaths) ?? await buildImpactReceipt({ root: project.root, snapshot, changes })
+            : await buildImpactReceipt({ root: project.root, snapshot, changes });
+          await writeWorkflowRunArtifact(project.workflowPaths, state.id, `impact-${assignmentId}.md`, JSON.stringify(impact, null, 2));
           const handoff = {
             assignmentId, planId: state.id, runId: implementation?.runId ?? null, requestedModel: model, resolvedRoute: implementation?.routing ?? null,
             continuation: implementation?.continuation ?? null,
             termination: signal?.aborted || implementation?.cancelled ? "cancelled" : failure ? "failed" : "completed",
-            exitCode: implementation?.exitCode ?? null, changes,
+            exitCode: implementation?.exitCode ?? null, changes, impact,
             scopeAnomalies: changes.status === "available" && params.paths ? changes.changes.filter((item) => !params.paths!.includes(item.path)).map((item) => item.path) : null,
             childClaims: implementation?.output ?? null, error: failure ? String(failure) : null,
             checkEvidence: implementation?.verification ?? null,
@@ -227,14 +238,25 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           const after = await workspaceSnapshot(project.root);
           const packetVerification = state.packet ? evaluateWorkflowVerification(verification.output, state.packet, verification.verification) : undefined;
           const checkEvidence = verification.verification;
+          const reviewsProtocolInvalid = reviews.some((review) => !reviewProtocolValid(review.output, "code"));
+          let ungroundedFindings = false;
+          if (!reviewsProtocolInvalid) {
+            for (const review of reviews) {
+              const parsed = parseWorkflowFindings(review.output);
+              const grounded = parsed ? await groundWorkflowFindings(project.root, parsed) : { ok: false };
+              if (!grounded.ok) { ungroundedFindings = true; break; }
+            }
+          }
           const passed = before === after && checkEvidence?.snapshot === after
             && codeReviewsPass(reviews, project.config.workflowMode === "thorough" ? 2 : 1)
+            && !ungroundedFindings
             && (packetVerification ? packetVerificationPasses(packetVerification) : legacyVerificationPasses(verification.output)
               && Boolean(checkEvidence.receipts.length && checkEvidence.receipts.every((receipt) => checkPassed(receipt, after))));
-          const substantiveRejection = reviews.some((review) => reviewProtocolValid(review.output, "code") && parseCodeVerdict(review.output) !== "PASS");
+          const substantiveRejection = !reviewsProtocolInvalid && !ungroundedFindings
+            && reviews.some((review) => reviewProtocolValid(review.output, "code") && parseCodeVerdict(review.output) !== "PASS");
           const protocolFailure = !substantiveRejection && before === after
             && Boolean(checkEvidence?.receipts.length && checkEvidence.snapshot === after && checkEvidence.receipts.every((receipt) => checkPassed(receipt, after)))
-            && (reviews.some((review) => !reviewProtocolValid(review.output, "code")) || packetVerification?.result === "protocol-failure");
+            && (reviewsProtocolInvalid || ungroundedFindings || packetVerification?.result === "protocol-failure");
           const cycle = state.execution.attempts;
           const artifactCycle = `${cycle}${recovering ? "-recovery" : ""}`;
           const findings = reviews.map((review) => `## ${review.title}\n${review.output}`).join("\n\n");
