@@ -34,12 +34,16 @@ test("advisory continuity reloads bounded observations and ignores malformed or 
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+const PASSING_CODE_REVIEW = `<workflow-findings>{"schemaVersion":1,"findings":[]}</workflow-findings>\n<code-verdict>PASS</code-verdict>`;
+const BLOCKED_CODE_REVIEW = `<workflow-findings>{"schemaVersion":1,"findings":[{"id":"review-blocked","severity":"blocker","path":"src/example.ts","startLine":1,"endLine":1,"evidenceDigest":"sha256:${"a".repeat(64)}","summary":"Review blocked on missing evidence."}]}</workflow-findings>\n<code-verdict>BLOCKED</code-verdict>`;
+
 test("protocol diagnostics distinguish rejection from malformed or contradictory output", () => {
   expect(reviewProtocolValid("<plan-verdict>REJECT</plan-verdict>", "plan")).toBe(true);
   expect(reviewProtocolValid("No verdict", "plan")).toBe(false);
   expect(reviewProtocolValid("<plan-verdict>OKAY</plan-verdict> trailing", "plan")).toBe(false);
   expect(reviewProtocolValid("<code-verdict>PASS</code-verdict>\n<code-verdict>BLOCKED</code-verdict>", "code")).toBe(false);
-  expect(reviewProtocolValid("<code-verdict>BLOCKED</code-verdict>", "code")).toBe(true);
+  expect(reviewProtocolValid("<code-verdict>BLOCKED</code-verdict>", "code")).toBe(false);
+  expect(reviewProtocolValid(BLOCKED_CODE_REVIEW, "code")).toBe(true);
   for (const prefix of ["> ", "Findings: ", "`", "    > ", "    ", "\t", "```text\n", "~~~\n"]) {
     const output = `${prefix}<plan-verdict>OKAY</plan-verdict>`;
     expect(reviewProtocolValid(output, "plan")).toBe(false);
@@ -56,5 +60,6 @@ test("native review gates require distinct expected reviewer lanes, not duplicat
   expect(planReviewsPass([{ ...technical, agentId: "implementer" }], 1)).toBe(false);
   const quality = { ...technical, agentId: "quality-reviewer" };
   expect(planReviewsPass([technical, quality])).toBe(true);
-  expect(codeReviewsPass([technical, technical].map(item => ({ ...item, output: "<code-verdict>PASS</code-verdict>" })))).toBe(false);
+  expect(codeReviewsPass([technical, technical].map(item => ({ ...item, output: PASSING_CODE_REVIEW })))).toBe(false);
+  expect(codeReviewsPass([{ ...technical, output: "<code-verdict>PASS</code-verdict>" }], 1)).toBe(false);
 });

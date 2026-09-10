@@ -56,4 +56,6 @@ Use the disposable examples in [Testing the harness](testing-harness.md) to sepa
 
 Inspect native status before launching anything. `workbench_plan` with `action: "recover"` reruns a passing or interrupted review of the same saved plan. For execution, call `inspect` again (and `visual` when a design brief requires it), then `workbench_execute recover` with the new evidence IDs and your assessment. One durable recovery is allowed; counters and previous artifacts are preserved. It cannot restore a stale ticket from JSON or bypass cancellation, substantive rejection, changed inputs, or recovery exhaustion. No implementation is replayed.
 
+Independent code review requires a canonical `<workflow-findings>` marker immediately before the unique terminal `<code-verdict>`. A missing envelope, invented path, or snippet that does not match current project file bytes is `verification_protocol_invalid`, not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to fix the protocol.
+
 If a writer continuation is unavailable after reload or a source change, inspect the partial/current work and assign a fresh bounded correction. Do not resend the original broad assignment automatically.

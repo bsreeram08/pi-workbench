@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Independent code review now requires a canonical `<workflow-findings>` envelope immediately before the terminal `<code-verdict>`. The host grounds claimed line ranges against current project files; a missing, reordered, contradictory, or ungrounded envelope is a protocol failure, not a `PASS` and not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to repair the protocol.
+
 - `/model-routing` family and fixed routes now move Main Pi with children. `--default` still writes the git-root project config; `session_start` applies the parent. Shipped installer default is `xai/grok-4.6` at high thinking. Coordinator prompts no longer recommend `gpt-6-astra` unless the user asked for that exact model. Isolated work is directed to `./.worktrees/<name>` inside the project with `.worktrees/` gitignored; the agent must not send the user to a second Pi session.
 
 - Split concurrent updater rollback scenarios into independent tests with their own deadlines. CI stops on the first test failure so timeout cleanup errors cannot obscure the initial failure behind the overall job deadline.

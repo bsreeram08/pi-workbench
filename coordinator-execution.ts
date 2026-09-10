@@ -9,6 +9,7 @@ import { requireAvailableDelegationModel } from "./workflow-agents.ts";
 import { throwIfWorkflowCancelled } from "./agent-result-guard.ts";
 import { checkPassed, workspaceSnapshot } from "./verification.ts";
 import { codeReviewsPass, legacyVerificationPasses, reviewProtocolValid, parseCodeVerdict } from "./workflow-prompts.ts";
+import { groundWorkflowFindings, parseWorkflowFindings } from "./workflow-findings.ts";
 import { readReviewContinuity, summarizeReviewContinuity } from "./review-continuity.ts";
 import { evaluateWorkflowVerification, packetVerificationPasses } from "./workflow-task-packet.ts";
 import { startWorkflowActivity } from "./workflow-activity.ts";
@@ -227,14 +228,25 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           const after = await workspaceSnapshot(project.root);
           const packetVerification = state.packet ? evaluateWorkflowVerification(verification.output, state.packet, verification.verification) : undefined;
           const checkEvidence = verification.verification;
+          const reviewsProtocolInvalid = reviews.some((review) => !reviewProtocolValid(review.output, "code"));
+          let ungroundedFindings = false;
+          if (!reviewsProtocolInvalid) {
+            for (const review of reviews) {
+              const parsed = parseWorkflowFindings(review.output);
+              const grounded = parsed ? await groundWorkflowFindings(project.root, parsed) : { ok: false };
+              if (!grounded.ok) { ungroundedFindings = true; break; }
+            }
+          }
           const passed = before === after && checkEvidence?.snapshot === after
             && codeReviewsPass(reviews, project.config.workflowMode === "thorough" ? 2 : 1)
+            && !ungroundedFindings
             && (packetVerification ? packetVerificationPasses(packetVerification) : legacyVerificationPasses(verification.output)
               && Boolean(checkEvidence.receipts.length && checkEvidence.receipts.every((receipt) => checkPassed(receipt, after))));
-          const substantiveRejection = reviews.some((review) => reviewProtocolValid(review.output, "code") && parseCodeVerdict(review.output) !== "PASS");
+          const substantiveRejection = !reviewsProtocolInvalid && !ungroundedFindings
+            && reviews.some((review) => reviewProtocolValid(review.output, "code") && parseCodeVerdict(review.output) !== "PASS");
           const protocolFailure = !substantiveRejection && before === after
             && Boolean(checkEvidence?.receipts.length && checkEvidence.snapshot === after && checkEvidence.receipts.every((receipt) => checkPassed(receipt, after)))
-            && (reviews.some((review) => !reviewProtocolValid(review.output, "code")) || packetVerification?.result === "protocol-failure");
+            && (reviewsProtocolInvalid || ungroundedFindings || packetVerification?.result === "protocol-failure");
           const cycle = state.execution.attempts;
           const artifactCycle = `${cycle}${recovering ? "-recovery" : ""}`;
           const findings = reviews.map((review) => `## ${review.title}\n${review.output}`).join("\n\n");
