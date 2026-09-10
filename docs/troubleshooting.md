@@ -58,4 +58,6 @@ Inspect native status before launching anything. `workbench_plan` with `action: 
 
 Independent code review requires a canonical `<workflow-findings>` marker immediately before the unique terminal `<code-verdict>`. A missing envelope, invented path, or snippet that does not match current project file bytes is `verification_protocol_invalid`, not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to fix the protocol.
 
+If review misses a coupled file, check the host impact receipt's `dependents`. If that receipt's status is `unavailable`, inspect the working tree manually. The receipt is a map, not proof of completeness, and an empty or missing test-import list does not fail verification.
+
 If a writer continuation is unavailable after reload or a source change, inspect the partial/current work and assign a fresh bounded correction. Do not resend the original broad assignment automatically.

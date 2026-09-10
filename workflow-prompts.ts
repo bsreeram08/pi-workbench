@@ -1,6 +1,7 @@
 import type { WorkflowAgentProfile } from "./workflow-agents.ts";
 import { formatConceptGuidance } from "./workflow-concepts.ts";
 import { codeReviewEnvelopeValid } from "./workflow-findings.ts";
+import { formatImpactReceiptForReview, type ImpactReceipt } from "./impact-receipt.ts";
 import { formatWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
 import type { AgentResult } from "./types.ts";
 import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
@@ -301,11 +302,13 @@ export function buildCodeReviewTask(
   plan: string,
   implementation: string,
   packet?: WorkflowTaskPacket,
+  impact?: ImpactReceipt,
 ): string {
   const focus = role === "quality-reviewer"
     ? "Check exact conformance to the approved plan, regression coverage, repository standards, and unsupported completion claims."
     : "Check architecture, correctness, edge cases, failure handling, security/reliability consequences, and accidental complexity.";
-  return `Review the actual current working tree after implementation. You are read-only.
+  const receipt = impact ? `${formatImpactReceiptForReview(impact)}\nDo not cite this receipt as evidenceDigest; ground findings against current file line ranges.\n\n` : "";
+  return `${receipt}Review the actual current working tree after implementation. You are read-only.
 
 USER TASK:
 ${task}

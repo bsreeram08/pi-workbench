@@ -2,7 +2,9 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { createHash, randomUUID } from "node:crypto";
+import * as path from "node:path";
 import type { WorkbenchConfig } from "./config.ts";
+import { buildImpactReceipt, readCachedImpactReceipt } from "./impact-receipt.ts";
 import type { AgentResult } from "./types.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { requireAvailableDelegationModel } from "./workflow-agents.ts";
@@ -171,11 +173,19 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           catch (error) { failure = error; }
           if (implementation && (implementation.cancelled || implementation.exitCode !== 0 || !implementation.output.trim())) failure = new Error(implementation.error ?? "Writer did not return a successful nonblank result.");
           const changes = compareSupervisionInventories(before, await captureSupervisionInventory(project.root));
+          let snapshot = "";
+          try { snapshot = await workspaceSnapshot(project.root); } catch { /* Receipt still records the observed change list. */ }
+          const runDir = path.join(project.workflowPaths.runs, state.id);
+          const changedPaths = changes.status === "available" ? changes.changes.map((item) => item.path) : [];
+          const impact = changes.status === "available"
+            ? await readCachedImpactReceipt(runDir, snapshot, changedPaths) ?? await buildImpactReceipt({ root: project.root, snapshot, changes })
+            : await buildImpactReceipt({ root: project.root, snapshot, changes });
+          await writeWorkflowRunArtifact(project.workflowPaths, state.id, `impact-${assignmentId}.md`, JSON.stringify(impact, null, 2));
           const handoff = {
             assignmentId, planId: state.id, runId: implementation?.runId ?? null, requestedModel: model, resolvedRoute: implementation?.routing ?? null,
             continuation: implementation?.continuation ?? null,
             termination: signal?.aborted || implementation?.cancelled ? "cancelled" : failure ? "failed" : "completed",
-            exitCode: implementation?.exitCode ?? null, changes,
+            exitCode: implementation?.exitCode ?? null, changes, impact,
             scopeAnomalies: changes.status === "available" && params.paths ? changes.changes.filter((item) => !params.paths!.includes(item.path)).map((item) => item.path) : null,
             childClaims: implementation?.output ?? null, error: failure ? String(failure) : null,
             checkEvidence: implementation?.verification ?? null,

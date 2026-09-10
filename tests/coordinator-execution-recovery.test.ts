@@ -212,6 +212,14 @@ test("implementation handoff observes dirty baseline and honors durable UI model
     expect(response.details.handoff.scopeAnomalies).toEqual([]);
     expect(response.details.handoff.termination).toBe("completed");
     expect(response.details.handoff.changes.authorship).toBe("unattributed");
+    expect(response.details.handoff.impact.status).toBe("available");
+    expect(response.details.handoff.impact.changedPaths).toEqual(["code.txt"]);
+    const directory = path.join(item.workflowPaths.runs, item.id);
+    const impactName = (await fs.readdir(directory)).find((name) => name.startsWith("impact-"));
+    expect(impactName).toBeDefined();
+    const stored = JSON.parse(await fs.readFile(path.join(directory, impactName!), "utf8"));
+    expect(stored.status).toBe("available");
+    expect(stored.changedPaths).toEqual(["code.txt"]);
   } finally { await item.cleanup(); }
 });
 
