@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Give the exclusive-restore updater rollback tests a 30-second deadline each. The expected-absent config race finished in just over 10 seconds on CI and was reported as a timeout rather than an assertion failure.
+
 - After each writer, the host records an impact receipt (changed TypeScript/JavaScript exports, import-graph dependents, coarse blast radius) and prepends a HOST IMPACT RECEIPT map onto independent code review. It is navigation only and cannot authorize completion.
 
 - Independent code review now requires a canonical `<workflow-findings>` envelope immediately before the terminal `<code-verdict>`. The host grounds claimed line ranges against current project files; a missing, reordered, contradictory, or ungrounded envelope is a protocol failure, not a `PASS` and not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to repair the protocol.

@@ -1162,7 +1162,7 @@ describe("Pi Workbench updater apply transaction", () => {
       "utf8",
     )) as { recovery: { configValues: Record<string, string> } };
     expect((await fs.lstat(manifest.recovery.configValues["statusline.json"]!)).isFile()).toBe(true);
-  }, 15_000);
+  }, 30_000);
 
   test("does not replace config created before exclusive restoration of an expected-absent file", async () => {
     const fixture = await createFixture();
@@ -1198,7 +1198,7 @@ describe("Pi Workbench updater apply transaction", () => {
     expect(result).toMatchObject({ category: "blocked", code: "ROLLBACK_INCOMPLETE", reload: false });
     expect(await fs.readFile(settings)).toEqual(sentinel);
     expect(await fs.readFile(path.join(fixture.agentDir, "backups", "update", result.backupId!, "config", "settings.json"))).toEqual(original);
-  }, 10_000);
+  }, 30_000);
 
   test("stores the checkout snapshot beside an externally linked root on the same filesystem", async () => {
     const fixture = await createFixture();
