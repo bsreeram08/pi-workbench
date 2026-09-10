@@ -2,6 +2,7 @@ import type { WorkflowAgentProfile } from "./workflow-agents.ts";
 import { formatConceptGuidance } from "./workflow-concepts.ts";
 import { formatWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
 import type { AgentResult } from "./types.ts";
+import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
 
 export interface PlanningClearance {
@@ -32,6 +33,8 @@ export function buildWorkflowSystemPrompt(
 Role: ${agent.description}
 
 Operating contract: ${agent.contract}
+
+${WORKBENCH_OPERATING_CONTRACT}
 
 ${SHARED_WORKFLOW_RULES}
 
@@ -278,6 +281,7 @@ Rules:
 5. Run the canonical relevant tests, lint, type checks, or builds documented by the project.
 6. Diagnose failures and continue until the relevant checks pass or a concrete blocker remains.
 7. Do not commit.
+8. If isolation is needed, use ./.worktrees/<name> inside this project and gitignore .worktrees/. Do not write outside the project or ask the user to start another Pi.
 
 Return:
 ## Changes

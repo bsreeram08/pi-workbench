@@ -46,14 +46,14 @@
     {
       "id": "route-subagents-dynamically-before-l-mt1lsce3",
       "statement": "Route subagents dynamically before launch using task complexity, uncertainty, risk, breadth, verification cost, and role as signals; use Luna/low for light work, Terra/medium for standard work, Sol/high for heavy work, and show a one-line model/thinking/reason receipt.",
-      "context": "Applies to Pi delegation and Workbench workflows; explicit task-based policy while Main Pi defaults to Sol/high.",
+      "context": "Applies to Pi delegation and Workbench workflows; explicit task-based policy while Main Pi defaults to Grok 4.6/high.",
       "createdAt": "2026-08-18T00:00:00.000Z",
       "updatedAt": "2026-08-18T00:00:00.000Z"
     },
     {
       "id": "support-session-only-child-model-rou-mt1mseji",
-      "statement": "Support session-only child model-routing overrides through both natural language (for example, ‘use Sol for everything this session’) and an explicit command/status surface; session overrides must not replace the durable Sol-first default.",
-      "context": "Applies automatically to delegated children. Main Pi globally defaults to OpenAI Codex GPT-5.6 Sol/high; session child overrides do not mutate the active parent model.",
+      "statement": "Support session model-routing overrides through both natural language (for example, ‘use grok routing this session’) and an explicit command/status surface; family and fixed routes move Main Pi and children together; --default persists the project family.",
+      "context": "Applies to Main Pi and delegated children. Main Pi globally defaults to xAI Grok 4.6/high.",
       "createdAt": "2026-08-18T00:00:00.000Z",
       "updatedAt": "2026-08-18T00:00:00.000Z"
     },

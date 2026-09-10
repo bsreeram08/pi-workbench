@@ -56,7 +56,7 @@ export const DEFAULT_CONFIG: WorkbenchConfig = {
   workflowDeepModel: "openai-codex/gpt-5.6-sol:medium",
   workflowReviewModel: "openai-codex/gpt-5.6-terra:high",
   modelRoutingPolicy: "balanced",
-  modelRoutingFamily: "codex",
+  modelRoutingFamily: "grok",
 };
 
 export function configPath(paths: ProjectPaths): string {

@@ -24,7 +24,7 @@ Do not `pi install npm:pi-workbench`. Use the recursive Git installation below; 
 | Verification | `workbench_verify` | Recorded commands, exit status, output artifacts, and code fingerprints |
 | Research | `/research` | Cited evidence ledger, not search-snippet authority |
 | Prompt editing | `/improve-prompt`, `/enhance-prompt`, `/reprompt` | Coordinator-written draft, labeled assumptions, explicit editor insertion |
-| Routing | `/model-routing` | Per-lane Codex or Grok 4.6 family for **children**; Main Pi stays put |
+| Routing | `/model-routing` | Per-lane Codex or Grok 4.6 family for Main Pi and children |
 
 Replaced companions: `pi-subagents`, `@capyup/pi-goal`, `@juicesharp/rpiv-todo`, `@juicesharp/rpiv-ask-user-question`. Do not enroll them. Use the first-party tools above.
 
@@ -126,7 +126,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | Command | Purpose |
 |---|---|
 | `/delegate [agent task]` | Roster, or run one specialist (`delegate_task` under the hood) |
-| `/model-routing` | Child family/policy menu; `grok`/`codex`/`balanced`/`economy`/`quality`; `--default` persists |
+| `/model-routing` | Family/policy menu for Main Pi and children; `grok`/`codex`/`balanced`/`economy`/`quality`; `--default` persists |
 | `/todos` | Show the first-party session todo list |
 | `/goals` | Show the user-owned Workbench goal |
 | `/goals-set <objective>` | Create or replace the goal. The agent does not create goals |
@@ -184,13 +184,13 @@ The footer shows Supervisor and child phase cards. `Ctrl+Alt+A` toggles the dash
 
 An animated activity row above the editor shows the current workflow phase and elapsed time, including while the parent waits for delegated work. It clears when work ends and pauses for planning input.
 
-## Child model routing
+## Model routing
 
-Shipped default family is Codex: light Luna/low, standard Terra/medium, heavy Sol/high. `/model-routing grok` is session-only; `/model-routing grok --default` writes the project family. Main Pi does not change unless launched with `--model`.
+Shipped default is Grok 4.6: Main Pi is `xai/grok-4.6` at high thinking; children use low/medium/high by lane. `/model-routing grok` or `/model-routing codex` moves **Main Pi and children** together. `--default` writes the project family so new sessions in that git root follow. Codex family uses Luna/low, Terra/medium, Sol/high for children and Sol/high for Main Pi.
 
-For a specific child, Main Pi can set `model: "openai-codex/gpt-6-astra:high"` on `delegate_task`, `workbench_agent_start`, or `workbench_plan` review. This overrides routing for that call only. Parallel delegation takes a model on each `tasks[]` entry. An unavailable model fails before launch without substitution; `effort` still controls the task budget separately. For related native Coordinator actions, record `workbench_model_policy` once and pass the matching domain: a UI/UX Astra preference then applies to later implementation, repair, and review without repeating the model.
+For a specific child, Main Pi can set `model: "provider/model[:thinking]"` on `delegate_task`, `workbench_agent_start`, or `workbench_plan` review when the user asked for that exact model. This overrides routing for that call only. Parallel delegation takes a model on each `tasks[]` entry. An unavailable model fails before launch without substitution; `effort` still controls the task budget separately. For related native Coordinator actions, record `workbench_model_policy` once and pass the matching domain.
 
-`--default` writes `.pi/pi-workbench/config.json` at the **git project root**. Natural-language directives such as `use grok routing this session` keep the other axis (family vs policy).
+`--default` writes `.pi/pi-workbench/config.json` at the **git project root**. Natural-language directives such as `use grok routing this session` keep the other axis (family vs policy) and still move Main Pi.
 
 GPT Luna/Sol children use priority service when `fastMode` is true (project default). Set `"fastMode": false` in project config to disable.
 

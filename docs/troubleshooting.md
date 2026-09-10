@@ -36,9 +36,9 @@ Current `Context file exceeds 24000 bytes` or `Context file is not a regular fil
 
 For an untrusted project, run `/trust` and restart Pi before launching children. Reloading an extension is separate from restarting after a new project-trust decision.
 
-The Main Pi model and child routing are separate settings. Seeing Main Pi use Astra while Codebase Explorer uses Terra can be expected. Inspect `/model-routing` for the child family and policy; changing them does not change Main Pi's model. See [Child model routing](../README.md#child-model-routing).
+`/model-routing grok` or `codex` moves Main Pi and children together. Adaptive lanes still differ: Main Pi stays at the family parent (Grok 4.6 high or Sol high) while a light child can be Grok low or Luna. Inspect `/model-routing` for the family and policy. See [Model routing](../README.md#model-routing).
 
-If you explicitly requested Astra for a particular task, Main Pi should pass `model: "openai-codex/gpt-6-astra:high"` on that delegation or native review call. `workbench_execute` requires an explicit model or matching task preference for implementation. Use `workbench_model_policy` to record the requested domain and actions once, then pass that domain on related calls. An unavailable exact model fails without substitution. A standalone Astra review override does not change later calls; a recorded task preference does. Conflicting model choices fail until Main Pi explicitly records the user's replacement direction.
+If you explicitly requested a model for a particular task, Main Pi should pass that exact `model: "provider/model[:thinking]"` on the delegation or native review call. `workbench_execute` requires an explicit model or matching task preference for implementation. Use `workbench_model_policy` to record the requested domain and actions once, then pass that domain on related calls. An unavailable exact model fails without substitution. A standalone override does not change later calls; a recorded task preference does. Conflicting model choices fail until Main Pi explicitly records the user's replacement direction. Isolated work belongs in `./.worktrees/<name>` inside the project; native inspect cannot follow a tree outside that checkout.
 
 ## Main Pi disappears during implementation
 

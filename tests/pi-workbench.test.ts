@@ -397,7 +397,7 @@ describe("project settings", () => {
       workflowDeepModel: "openai-codex/gpt-5.6-sol:medium",
       workflowReviewModel: "openai-codex/gpt-5.6-terra:high",
       modelRoutingPolicy: "balanced",
-      modelRoutingFamily: "codex",
+      modelRoutingFamily: "grok",
     });
   });
 

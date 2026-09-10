@@ -57,7 +57,7 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
       agent: AgentSchema,
       task: Type.String({ minLength: 1, maxLength: 100_000, description: "Focused task and observable success criteria" }),
       effort: Type.Optional(EffortSchema),
-      model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] override, e.g. openai-codex/gpt-6-astra:high" })),
+      model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] override the user requested" })),
       allowQuestions: Type.Optional(Type.Boolean({ default: true, description: "Allow at most one child ask_parent question for the run" })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

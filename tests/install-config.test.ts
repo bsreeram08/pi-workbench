@@ -123,8 +123,8 @@ describe("public installer configuration safety", () => {
     const evolution = JSON.parse(await fs.readFile(path.join(evolutionDir, "config.json"), "utf8"));
     expect(settings).toEqual({
       theme: "ember",
-      defaultProvider: "openai-codex",
-      defaultModel: "gpt-5.6-sol",
+      defaultProvider: "xai",
+      defaultModel: "grok-4.6",
       defaultThinkingLevel: "high",
       quietStartup: true,
       customSetting: true,
