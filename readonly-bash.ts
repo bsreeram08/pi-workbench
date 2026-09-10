@@ -8,7 +8,7 @@
 const WRITE_REDIRECT = /(?:^|[\s;|&])(?:\d*)>>?(?!\s*\/dev\/null\b)/;
 const MUTATING_UNIX = /(?:^|[\s;|&])(?:sudo\s+)?(?:rm|rmdir|mv|cp|mkdir|chmod|chown|ln|touch|tee|install|dd|truncate)\b/;
 const MUTATING_SED = /(?:^|[\s;|&])sed\s+[^\n]*-i\b/;
-const MUTATING_GIT = /(?:^|[\s;|&])git\s+(?:add|commit|checkout|switch|restore|reset|rebase|merge|cherry-pick|stash|clean|push|update-index|rm|mv)\b/;
+const MUTATING_GIT = /(?:^|[\s;|&])git\s+(?:add|commit|checkout|switch|restore|reset|rebase|merge|cherry-pick|stash|clean|push|update-index|rm|mv|worktree)\b/;
 const MUTATING_PACKAGE = /(?:^|[\s;|&])(?:npm|pnpm|yarn|bun)\s+(?:add|remove|uninstall|install|update|publish|link)\b/;
 
 export function bashMutatesWorkspace(command: string): boolean {

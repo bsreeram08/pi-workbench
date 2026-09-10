@@ -26,6 +26,8 @@ describe("read-only bash policy", () => {
     expect(bashMutatesWorkspace("git add src/index.ts")).toBe(true);
     expect(bashMutatesWorkspace("git commit -m 'wip'")).toBe(true);
     expect(bashMutatesWorkspace("git checkout -b feature")).toBe(true);
+    expect(bashMutatesWorkspace("git worktree add ../.worktrees/slice HEAD")).toBe(true);
+    expect(bashMutatesWorkspace("git worktree add ./.worktrees/slice -b slice")).toBe(true);
     expect(bashMutatesWorkspace("npm install left-pad")).toBe(true);
     expect(bashMutatesWorkspace("bun add zod")).toBe(true);
   });

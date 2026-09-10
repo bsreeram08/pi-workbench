@@ -399,3 +399,32 @@ export async function readCachedImpactReceipt(
 export async function loadLatestImpactReceipt(dir: string, snapshot: string): Promise<ImpactReceipt | undefined> {
   return readCachedImpactReceipt(dir, snapshot);
 }
+
+export async function listWorkingTreeChanges(root: string): Promise<ImpactChanges> {
+  try {
+    const names = async (args: string[]): Promise<string[]> => {
+      const { stdout } = await exec("git", ["-C", root, ...args], { timeout: 15_000 });
+      return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+    };
+    const [diff, untracked, deleted] = await Promise.all([
+      names(["diff", "--name-only", "HEAD"]),
+      names(["ls-files", "--others", "--exclude-standard"]),
+      names(["diff", "--name-only", "--diff-filter=D", "HEAD"]),
+    ]);
+    const deletedSet = new Set(deleted);
+    const changes: Array<{ path: string; kind: ImpactChangeKind }> = [];
+    const seen = new Set<string>();
+    for (const pathName of [...diff, ...untracked]) {
+      if (seen.has(pathName)) continue;
+      seen.add(pathName);
+      changes.push({
+        path: pathName,
+        kind: deletedSet.has(pathName) ? "deleted" : untracked.includes(pathName) ? "added" : "modified",
+      });
+    }
+    changes.sort((a, b) => a.path.localeCompare(b.path));
+    return { status: "available", changes };
+  } catch (error) {
+    return { status: "unavailable", error: error instanceof Error ? error.message : String(error) };
+  }
+}

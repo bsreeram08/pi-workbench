@@ -37,7 +37,7 @@ def main():
         raise SystemExit("error: installed Pi command discovery failed; inspect Pi startup errors for this agent directory")
     expected = pathlib.Path(args.root, "index.ts").resolve()
     commands = response.get("data", {}).get("commands", [])
-    required = {"enhance", "improveprompt", "reprompt", "prompt-use", "plan", "start-work"}
+    required = {"enhance", "improveprompt", "reprompt", "prompt-use", "plan", "start-work", "review"}
     found = set()
     for command in commands:
         source = command.get("sourceInfo", {}).get("path")

@@ -33,6 +33,7 @@ import { WorkbenchDashboardController } from "../dashboard-controller.ts";
 import { AgentDetailOverlay } from "../agent-overlay.ts";
 import { canDelegateSpecialists, parseSupervisorDecision } from "../supervisor.ts";
 import { DEFAULT_CONFIG, normalizeConfig } from "../config.ts";
+import { allowedQmdCollections, resolveQmdCollections } from "../project.ts";
 import { SKILL_EVOLUTION_ENABLED_BY_DEFAULT } from "../skill-evolution.ts";
 import {
   CHILD_MEMORY_ACTIONS,
@@ -262,6 +263,20 @@ describe("Pi workflow routing", () => {
       else process.env.PI_WORKBENCH_PROJECT_ROOT = previous;
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("constrains QMD search to the two project collections", () => {
+    const allowed = allowedQmdCollections({
+      stateCollection: "pi-workbench-state-abc",
+      projectCollection: "pi-workbench-project-abc",
+    });
+    expect(allowed).toEqual(["pi-workbench-state-abc", "pi-workbench-project-abc"]);
+    expect(resolveQmdCollections(undefined, allowed)).toEqual({ ok: true, collections: allowed });
+    expect(resolveQmdCollections("pi-workbench-project-abc", allowed)).toEqual({
+      ok: true, collections: ["pi-workbench-project-abc"],
+    });
+    expect(resolveQmdCollections("secrets", allowed).ok).toBe(false);
+    expect(resolveQmdCollections("any", []).ok).toBe(false);
   });
 
   test("routes workflow agents from task effort rather than fixed role assignments", () => {
