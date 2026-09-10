@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeConfig } from "../config.ts";
@@ -491,6 +491,45 @@ describe("durable family defaults and customize menu", () => {
       await commands.get("model-routing")?.("", ctx);
       expect(readDurableRouting(root)).toEqual({ policy: "balanced", family: "grok" });
       expect(writeDurableRouting(root, { family: "codex" })).toContain("config.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a symlinked routing config", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-workbench-routing-link-"));
+    try {
+      mkdirSync(join(root, ".pi", "pi-workbench"), { recursive: true });
+      const outside = join(root, "outside.json");
+      writeFileSync(outside, "{}\n");
+      symlinkSync(outside, join(root, ".pi", "pi-workbench", "config.json"));
+      expect(() => writeDurableRouting(root, { family: "grok" })).toThrow(/Unsafe Workbench routing config/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("notifies when the parent model cannot be applied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-workbench-parent-miss-"));
+    const notices: Array<{ message: string; level: string }> = [];
+    const pi = {
+      registerCommand() {},
+      on(name: string, handler: (event: any, ctx: any) => unknown) {
+        if (name === "session_start") void handler({}, {
+          cwd: root,
+          hasUI: true,
+          ui: { setStatus() {}, notify(message: string, level: string) { notices.push({ message, level }); } },
+          sessionManager: { getBranch: () => [] },
+          modelRegistry: { find: () => undefined },
+        });
+      },
+      appendEntry() {},
+      registerEntryRenderer() {},
+      setModel: async () => false,
+    } as any;
+    try {
+      registerModelRouting(pi);
+      expect(notices.some((item) => item.level === "warning" && item.message.includes("not in Pi's registry"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

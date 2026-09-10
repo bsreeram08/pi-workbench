@@ -97,6 +97,22 @@ function agentResult(agent: AgentSpec, output = "valid output", overrides: Parti
 
 const PASSING_CODE_REVIEW = `${canonicalWorkflowFindingsMarker({ schemaVersion: 1, findings: [] })}\n<code-verdict>PASS</code-verdict>`;
 
+test("/review runs independent reviewers without a workflow ticket", async () => {
+  const roles: string[] = [];
+  const item = await harness(async (agent) => {
+    roles.push(agent.id);
+    return agentResult(agent, PASSING_CODE_REVIEW);
+  });
+  try {
+    await item.commands.get("review")?.("Check the current tree", context(item.root));
+    expect(roles).toEqual(["quality-reviewer", "technical-reviewer"]);
+    expect(item.leaseOperations).toEqual([]);
+    expect(item.reports.some((entry) => entry.title === "Independent review")).toBe(true);
+  } finally {
+    await fs.rm(item.root, { recursive: true, force: true });
+  }
+});
+
 function changesRequiredReview(source: string, path = "hero.ts"): string {
   const evidenceDigest = `sha256:${createHash("sha256").update(source.split("\n").slice(0, 1).join("\n"), "utf8").digest("hex")}`;
   return `${canonicalWorkflowFindingsMarker({

@@ -70,7 +70,7 @@ Default install links Workbench, the cmux companion, the framed editor, and the 
 
 Runtime installation does not need checkout development dependencies, even if Bun or TypeScript is installed globally. Development checks run only with `--strict`. Before reporting success, the installer verifies that Pi discovers `/enhance`, `/improveprompt`, and the workflow commands from the installed user profile.
 
-Opinionated profile (Codex Sol/high, Ember, compact startup header, preference baseline, allowlisted skill evolution):
+Opinionated profile (Grok 4.6/high, Ember, compact startup header, preference baseline, allowlisted skill evolution):
 
 ```bash
 ./install.sh --full
@@ -136,6 +136,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/plan --revise [feedback]` | Replan from the current task and draft before implementation starts |
 | `/start-work` | Implement, independently review, repair, and verify the approved plan |
 | `/start-work --pipeline` | Run automatic implementation, review, and repair stages |
+| `/review [focus]` | Independent code review of the current tree; no plan or ticket required |
 | `/autopilot [task]` | Plan, implement, review, and verify in one run |
 | `/automode [on\|off\|status]` | Keep this Coordinator session moving with conservative defaults |
 | `/workflow-status` | Current plan state and evidence paths |

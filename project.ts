@@ -208,7 +208,7 @@ interface QmdConfig {
   projectCollection: string;
 }
 
-async function readQmdConfig(paths: ProjectPaths): Promise<QmdConfig | undefined> {
+export async function readQmdConfig(paths: ProjectPaths): Promise<QmdConfig | undefined> {
   try {
     return JSON.parse(await fs.readFile(paths.qmd, "utf8")) as QmdConfig;
   } catch {
@@ -254,6 +254,20 @@ export async function refreshQmd(exec: Exec): Promise<void> {
   } catch {
     // Knowledge retrieval is an enhancement; a missing/broken index must not lose the council run.
   }
+}
+
+export function allowedQmdCollections(config: { stateCollection: string; projectCollection: string } | undefined): string[] {
+  return config ? [config.stateCollection, config.projectCollection] : [];
+}
+
+export function resolveQmdCollections(
+  requested: string | undefined,
+  allowed: string[],
+): { ok: true; collections: string[] } | { ok: false; reason: string } {
+  if (allowed.length === 0) return { ok: false, reason: "Project QMD collections are not configured." };
+  if (!requested?.trim()) return { ok: true, collections: allowed };
+  if (!allowed.includes(requested)) return { ok: false, reason: "Unknown QMD collection." };
+  return { ok: true, collections: [requested] };
 }
 
 export async function searchQmd(

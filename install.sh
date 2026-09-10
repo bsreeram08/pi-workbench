@@ -7,10 +7,10 @@ Install Sreeram's Pi Workbench.
 
 Usage: ./install.sh [--full] [--strict]
 
-  --full    Opt into the custom startup header, Ember theme, Sol-first model
+  --full    Opt into the custom startup header, Ember theme, Grok-first model
             defaults, preference baseline, status line, and trusted skill-evolution
             profile. Existing JSON values win except active model/thinking defaults
-            become OpenAI Codex Sol/high and the active theme becomes Ember.
+            become xAI Grok 4.6/high and the active theme becomes Ember.
   --strict  Require Bun and TypeScript and run every development check.
   --help    Show this help.
 

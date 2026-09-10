@@ -23,6 +23,7 @@ import { bashMutatesWorkspace } from "./readonly-bash.ts";
 import { renderMemoryEntries } from "./memory.ts";
 import { fetchResearchUrl, searchResearchWeb } from "./research-tools.ts";
 import { registerVerificationTool } from "./verification-tool.ts";
+import { allowedQmdCollections, findProjectRootSync, getProjectPaths, readQmdConfig, resolveQmdCollections } from "./project.ts";
 
 const MAX_OUTPUT = 48 * 1024;
 const BROWSER_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "research-browser.mjs");
@@ -363,14 +364,28 @@ export default function piWorkbenchChildTools(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20, default: 8 })),
     }),
     async execute(_toolCallId, params, signal) {
-      const args = ["search", "--json", "-n", String(params.limit ?? 8)];
-      if (params.collection) args.push("-c", params.collection);
-      args.push(params.query);
-      const result = await pi.exec("qmd", args, { signal, timeout: 30_000 });
-      if (result.code !== 0) throw new Error(result.stderr || "QMD search failed");
+      const paths = getProjectPaths(findProjectRootSync(process.env.PI_WORKBENCH_PROJECT_ROOT?.trim() || process.cwd()));
+      const allowed = allowedQmdCollections(await readQmdConfig(paths));
+      const resolved = resolveQmdCollections(params.collection, allowed);
+      if (!resolved.ok) throw new Error(resolved.reason);
+      const results: unknown[] = [];
+      for (const collection of resolved.collections) {
+        const result = await pi.exec(
+          "qmd",
+          ["search", "--json", "-c", collection, "-n", String(params.limit ?? 8), params.query],
+          { signal, timeout: 30_000 },
+        );
+        if (result.code !== 0) continue;
+        try {
+          const parsed = JSON.parse(result.stdout || "[]") as unknown;
+          if (Array.isArray(parsed)) results.push(...parsed);
+        } catch {
+          continue;
+        }
+      }
       return {
-        content: [{ type: "text", text: truncate(result.stdout || "[]") }],
-        details: { query: params.query, collection: params.collection, exitCode: result.code },
+        content: [{ type: "text", text: truncate(JSON.stringify(results)) }],
+        details: { query: params.query, collections: resolved.collections },
       };
     },
   });

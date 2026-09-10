@@ -174,15 +174,37 @@ export function readDurableRouting(cwd: string): DurableRoutingDefaults {
   }
 }
 
+function assertSafeRoutingConfigPath(root: string, configPath: string): void {
+  const resolvedRoot = path.resolve(root);
+  const expected = path.join(resolvedRoot, ".pi", "pi-workbench", "config.json");
+  if (path.resolve(configPath) !== expected) throw new Error("Workbench routing config path is invalid.");
+  const rootStat = fs.lstatSync(resolvedRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error("Unsafe project root.");
+  let current = resolvedRoot;
+  for (const component of [".pi", "pi-workbench"]) {
+    current = path.join(current, component);
+    if (!fs.existsSync(current)) {
+      fs.mkdirSync(current, { mode: 0o700 });
+      continue;
+    }
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Unsafe project state directory: ${current}`);
+  }
+  if (fs.existsSync(expected)) {
+    const stat = fs.lstatSync(expected);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Unsafe Workbench routing config.");
+  }
+}
+
 export function writeDurableRouting(cwd: string, patch: Partial<DurableRoutingDefaults>): string {
-  const configPath = projectConfigPath(findProjectRootSync(cwd));
+  const root = findProjectRootSync(cwd);
+  const configPath = projectConfigPath(root);
+  assertSafeRoutingConfigPath(root, configPath);
   let current: Record<string, unknown> = {};
   if (fs.existsSync(configPath)) {
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Workbench routing config is malformed.");
     current = parsed as Record<string, unknown>;
-  } else {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
   }
   if (patch.policy) current.modelRoutingPolicy = patch.policy;
   if (patch.family) current.modelRoutingFamily = patch.family;
@@ -272,14 +294,30 @@ export function registerModelRouting(
 
   const applyParentModel = async (ctx: ExtensionContext, next: ModelRoutingState): Promise<void> => {
     const route = parentRouteForState(next);
+    const target = `${route.provider}/${route.id}`;
+    const warn = (message: string): void => {
+      if (ctx.hasUI) ctx.ui.notify(message, "warning");
+    };
     let model: unknown;
     try {
       model = ctx.modelRegistry.find(route.provider, route.id);
-    } catch {
+    } catch (error) {
+      warn(`Could not switch Main Pi to ${target}: ${error instanceof Error ? error.message : String(error)}. Parent is unchanged.`);
       return;
     }
-    if (!model) return;
-    if (typeof pi.setModel === "function") await pi.setModel(model as never);
+    if (!model) {
+      warn(`Could not switch Main Pi to ${target}; that model is not in Pi's registry. Parent is unchanged.`);
+      return;
+    }
+    if (typeof pi.setModel !== "function") {
+      warn(`Could not switch Main Pi to ${target}; this Pi build cannot set the parent model.`);
+      return;
+    }
+    const applied = await pi.setModel(model as never);
+    if (applied === false) {
+      warn(`Could not switch Main Pi to ${target}. Parent is unchanged. Use Pi /login if that provider has no credential.`);
+      return;
+    }
     if (typeof pi.setThinkingLevel === "function") pi.setThinkingLevel(route.thinking);
   };
 

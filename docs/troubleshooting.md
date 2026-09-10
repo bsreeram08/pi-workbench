@@ -56,6 +56,8 @@ Use the disposable examples in [Testing the harness](testing-harness.md) to sepa
 
 Inspect native status before launching anything. `workbench_plan` with `action: "recover"` reruns a passing or interrupted review of the same saved plan. For execution, call `inspect` again (and `visual` when a design brief requires it), then `workbench_execute recover` with the new evidence IDs and your assessment. One durable recovery is allowed; counters and previous artifacts are preserved. It cannot restore a stale ticket from JSON or bypass cancellation, substantive rejection, changed inputs, or recovery exhaustion. No implementation is replayed.
 
+To review the working tree at any time, run `/review` (optional focus text). It does not need an approved plan or a completion ticket. During `/start-work`, Main Pi still uses `workbench_execute` `verify` for the gated review. `/delegate quality-reviewer <task>` is a single specialist, not the independent dual-lane gate.
+
 Independent code review requires a canonical `<workflow-findings>` marker immediately before the unique terminal `<code-verdict>`. A missing envelope, invented path, or snippet that does not match current project file bytes is `verification_protocol_invalid`, not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to fix the protocol.
 
 If review misses a coupled file, check the host impact receipt's `dependents`. If that receipt's status is `unavailable`, inspect the working tree manually. The receipt is a map, not proof of completeness, and an empty or missing test-import list does not fail verification.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.
+
+- Installer `--full` copy now matches the shipped Grok 4.6 parent default. Read-only bash blocks `git worktree`. `--default` routing config refuses symlink paths. Child `qmd_search` is limited to this project's QMD collections. Main Pi notifies when `setModel` cannot apply the family parent.
+
 - Give the exclusive-restore updater rollback tests a 30-second deadline each. The expected-absent config race finished in just over 10 seconds on CI and was reported as a timeout rather than an assertion failure.
 
 - After each writer, the host records an impact receipt (changed TypeScript/JavaScript exports, import-graph dependents, coarse blast radius) and prepends a HOST IMPACT RECEIPT map onto independent code review. It is navigation only and cannot authorize completion.

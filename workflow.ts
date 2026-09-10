@@ -76,7 +76,7 @@ import { MODEL_ROUTING_RECEIPT_ENTRY } from "./model-routing.ts";
 import type { AgentResult, Exec } from "./types.ts";
 import { checkPassed, workspaceSnapshot } from "./verification.ts";
 import { captureSupervisionInventory, compareSupervisionInventories } from "./supervision-evidence.ts";
-import { buildImpactReceipt, loadLatestImpactReceipt, type ImpactReceipt } from "./impact-receipt.ts";
+import { buildImpactReceipt, listWorkingTreeChanges, loadLatestImpactReceipt, type ImpactReceipt } from "./impact-receipt.ts";
 import { registerCoordinatorPlanning } from "./coordinator-planning.ts";
 import { registerCoordinatorExecution } from "./coordinator-execution.ts";
 import { registerCoordinatorModelPolicy } from "./coordinator-model-policy.ts";
@@ -102,7 +102,7 @@ interface WorkflowDependencies {
 }
 
 type WorkbenchTaskState = "running" | "blocked" | "needs_attention" | "completed" | "failed" | "cancelled" | "interrupted";
-type WorkbenchTaskScope = "plan" | "execution" | "autopilot" | "delegate";
+type WorkbenchTaskScope = "plan" | "execution" | "autopilot" | "delegate" | "review";
 
 interface Progress {
   update(message: string): void;
@@ -166,7 +166,7 @@ function progressFor(
   emitEvents = true,
 ): Progress {
   let activity: ReturnType<typeof startWorkflowActivity> | undefined = startWorkflowActivity(ctx, `${title}: starting`);
-  const phase: WorkflowLifecyclePhase = scope === "plan" ? "planning" : scope === "delegate" ? "delegation" : "execution";
+  const phase: WorkflowLifecyclePhase = scope === "plan" ? "planning" : scope === "delegate" || scope === "review" ? "delegation" : "execution";
   let terminal = false;
   const emit = (state: WorkbenchTaskState): void => {
     if (!emitEvents) return;
@@ -1297,6 +1297,50 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   pi.registerCommand("start-work", {
     description: "Main Pi directs approved implementation and native verification; --pipeline uses automatic stages",
     handler: runStartWorkCommand,
+  });
+
+  pi.registerCommand("review", {
+    description: "Run independent code review on the current working tree without a workflow ticket",
+    handler: async (rawArgs, ctx) => {
+      const trustRequired = guardSubagentLaunch(ctx);
+      if (trustRequired) {
+        report("Project trust required", trustRequired);
+        return;
+      }
+      const project = await resolveProject(ctx);
+      const focus = rawArgs.trim() || "Review the current working tree against repository standards and the user's request.";
+      const snapshot = await workspaceSnapshot(project.root).catch(() => "");
+      const changes = await listWorkingTreeChanges(project.root);
+      const impact = await buildImpactReceipt({ root: project.root, snapshot, changes });
+      const state = await loadCurrentWorkflowPlan(project.workflowPaths);
+      const plan = state?.plan?.trim()
+        ? state.plan
+        : "# Current tree\n\nNo approved workflow plan is bound. Review the working tree as it is.";
+      dashboard.beginRun(`review-${Date.now()}`);
+      const progress = progressFor(pi, ctx, "Independent review", focus, "review");
+      try {
+        const reviews = await runRoleBatch(
+          project.root,
+          project.config,
+          reviewRoles(project.config).map((role) => ({
+            role,
+            task: buildCodeReviewTask(role, focus, plan, "", state?.packet, impact),
+          })),
+          focus,
+          progress,
+          "on-demand-review",
+          "Independent review",
+        );
+        progress.finish("completed", "Independent review finished");
+        report("Independent review", formatAgentResults(reviews));
+      } catch (error) {
+        progress.finish("failed", error instanceof Error ? error.message : String(error));
+        report("Independent review failed", error instanceof Error ? error.message : String(error));
+      } finally {
+        progress.clear();
+        dashboard.endRun();
+      }
+    },
   });
 
   pi.registerCommand("autopilot", {
