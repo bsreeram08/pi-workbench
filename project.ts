@@ -39,6 +39,26 @@ export function findProjectRootSync(cwd: string): string {
   return resolved;
 }
 
+export async function resolveGitCheckoutRoot(candidate: string | undefined, sessionRoot: string): Promise<string> {
+  const session = path.resolve(sessionRoot);
+  if (!candidate?.trim()) return session;
+  const resolved = path.resolve(session, candidate.trim());
+  let stat;
+  try {
+    stat = await fs.lstat(resolved);
+  } catch {
+    throw new Error(`Implementation root does not exist: ${resolved}`);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Implementation root must be a real Git checkout directory, not a symlink or file.");
+  const real = await fs.realpath(resolved);
+  const git = spawnSync("git", ["-C", real, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 10_000 });
+  const toplevel = git.status === 0 ? git.stdout.trim() : "";
+  if (!toplevel || path.resolve(toplevel) !== real) {
+    throw new Error("Implementation root must be the toplevel of a Git checkout. Pass that repo's path as root; do not start a second Pi.");
+  }
+  return real;
+}
+
 export async function findProjectRoot(cwd: string, exec: Exec): Promise<string> {
   try {
     const result = await exec("git", ["rev-parse", "--show-toplevel"], { timeout: 10_000 });

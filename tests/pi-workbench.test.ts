@@ -1,5 +1,6 @@
 import { recordResearchPage } from "../research-provenance.ts";
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,7 +34,7 @@ import { WorkbenchDashboardController } from "../dashboard-controller.ts";
 import { AgentDetailOverlay } from "../agent-overlay.ts";
 import { canDelegateSpecialists, parseSupervisorDecision } from "../supervisor.ts";
 import { DEFAULT_CONFIG, normalizeConfig } from "../config.ts";
-import { allowedQmdCollections, resolveQmdCollections } from "../project.ts";
+import { allowedQmdCollections, resolveGitCheckoutRoot, resolveQmdCollections } from "../project.ts";
 import { SKILL_EVOLUTION_ENABLED_BY_DEFAULT } from "../skill-evolution.ts";
 import {
   CHILD_MEMORY_ACTIONS,
@@ -262,6 +263,23 @@ describe("Pi workflow routing", () => {
       if (previous === undefined) delete process.env.PI_WORKBENCH_PROJECT_ROOT;
       else process.env.PI_WORKBENCH_PROJECT_ROOT = previous;
       await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveGitCheckoutRoot requires a real Git toplevel", async () => {
+    const session = await fs.mkdtemp(path.join(os.tmpdir(), "pi-workbench-session-"));
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "pi-workbench-impl-"));
+    const nested = path.join(other, "src");
+    try {
+      await fs.mkdir(nested);
+      expect(spawnSync("git", ["init"], { cwd: other, encoding: "utf8" }).status).toBe(0);
+      expect(await resolveGitCheckoutRoot(undefined, session)).toBe(path.resolve(session));
+      expect(await resolveGitCheckoutRoot(other, session)).toBe(await fs.realpath(other));
+      await expect(resolveGitCheckoutRoot(nested, session)).rejects.toThrow(/toplevel/);
+      await expect(resolveGitCheckoutRoot(path.join(session, "missing"), session)).rejects.toThrow(/does not exist/);
+    } finally {
+      await fs.rm(session, { recursive: true, force: true });
+      await fs.rm(other, { recursive: true, force: true });
     }
   });
 

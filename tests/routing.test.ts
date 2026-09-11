@@ -259,6 +259,7 @@ describe("session routing controls", () => {
     });
     const prompt = await handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base" }, ctx) as { systemPrompt: string };
     expect(prompt.systemPrompt).toContain("./.worktrees/");
+    expect(prompt.systemPrompt).toContain("workbench_execute root=");
     expect(prompt.systemPrompt).toContain("Do not invent openai-codex/gpt-6-astra");
     } finally {
       rmSync(root, { recursive: true, force: true });

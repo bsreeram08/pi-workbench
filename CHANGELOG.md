@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Independent review and Coordinator execute can bind to another Git checkout via `/review --root` and `workbench_execute` `root`. Children and native inspect run in that toplevel so a plan hosted in one repo can review work that lives in another, without starting a second Pi. The path must be a real Git toplevel, not a symlink.
+
 - `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.
 
 - Installer `--full` copy now matches the shipped Grok 4.6 parent default. Read-only bash blocks `git worktree`. `--default` routing config refuses symlink paths. Child `qmd_search` is limited to this project's QMD collections. Main Pi notifies when `setModel` cannot apply the family parent.
