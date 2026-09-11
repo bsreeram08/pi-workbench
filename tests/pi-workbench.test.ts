@@ -34,7 +34,7 @@ import { WorkbenchDashboardController } from "../dashboard-controller.ts";
 import { AgentDetailOverlay } from "../agent-overlay.ts";
 import { canDelegateSpecialists, parseSupervisorDecision } from "../supervisor.ts";
 import { DEFAULT_CONFIG, normalizeConfig } from "../config.ts";
-import { allowedQmdCollections, resolveGitCheckoutRoot, resolveQmdCollections } from "../project.ts";
+import { allowedQmdCollections, canonicalProjectRoot, qmdCollectionNames, resolveGitCheckoutRoot, resolveQmdCollections } from "../project.ts";
 import { SKILL_EVOLUTION_ENABLED_BY_DEFAULT } from "../skill-evolution.ts";
 import {
   CHILD_MEMORY_ACTIONS,
@@ -283,12 +283,42 @@ describe("Pi workflow routing", () => {
     }
   });
 
+  test("worktrees of the same Git repo share QMD and memory identity", async () => {
+    const main = await fs.mkdtemp(path.join(os.tmpdir(), "pi-workbench-qmd-main-"));
+    const parent = path.dirname(main);
+    const worktree = path.join(parent, `pi-workbench-qmd-wt-${path.basename(main)}`);
+    try {
+      expect(spawnSync("git", ["init"], { cwd: main, encoding: "utf8" }).status).toBe(0);
+      spawnSync("git", ["-C", main, "config", "user.email", "test@example.com"]);
+      spawnSync("git", ["-C", main, "config", "user.name", "Test"]);
+      expect(spawnSync("git", ["-C", main, "commit", "--allow-empty", "-m", "init"], { encoding: "utf8" }).status).toBe(0);
+      const added = spawnSync("git", ["-C", main, "worktree", "add", worktree, "HEAD"], { encoding: "utf8" });
+      expect(added.status, added.stderr).toBe(0);
+      expect(canonicalProjectRoot(worktree)).toBe(canonicalProjectRoot(main));
+      expect(qmdCollectionNames(worktree)).toEqual(qmdCollectionNames(main));
+      const { createMemoryRoots } = await import("../memory-store.ts");
+      const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-workbench-mem-"));
+      try {
+        const mainMem = createMemoryRoots(agentDir, main);
+        const wtMem = createMemoryRoots(agentDir, worktree);
+        expect(wtMem.projectRoot).toBe(mainMem.projectRoot);
+      } finally {
+        await fs.rm(agentDir, { recursive: true, force: true });
+      }
+    } finally {
+      spawnSync("git", ["-C", main, "worktree", "remove", "--force", worktree], { encoding: "utf8" });
+      await fs.rm(worktree, { recursive: true, force: true });
+      await fs.rm(main, { recursive: true, force: true });
+    }
+  });
+
   test("constrains QMD search to the two project collections", () => {
     const allowed = allowedQmdCollections({
       stateCollection: "pi-workbench-state-abc",
       projectCollection: "pi-workbench-project-abc",
+      extraCollections: ["pi-workbench-project-old"],
     });
-    expect(allowed).toEqual(["pi-workbench-state-abc", "pi-workbench-project-abc"]);
+    expect(allowed).toEqual(["pi-workbench-state-abc", "pi-workbench-project-abc", "pi-workbench-project-old"]);
     expect(resolveQmdCollections(undefined, allowed)).toEqual({ ok: true, collections: allowed });
     expect(resolveQmdCollections("pi-workbench-project-abc", allowed)).toEqual({
       ok: true, collections: ["pi-workbench-project-abc"],

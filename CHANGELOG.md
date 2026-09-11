@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- QMD and project memory identity follow the Git primary checkout, so linked worktrees share the same `pi-workbench-state-*` / `pi-workbench-project-*` collections and memory store. A worktree that already had path-hashed collections keeps those names as extra search targets while new writes go to the shared pair.
+
 - Independent review and Coordinator execute can bind to another Git checkout via `/review --root` and `workbench_execute` `root`. Children and native inspect run in that toplevel so a plan hosted in one repo can review work that lives in another, without starting a second Pi. The path must be a real Git toplevel, not a symlink.
 
 - `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.

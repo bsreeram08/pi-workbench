@@ -3,6 +3,7 @@ import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { canonicalProjectRoot } from "./project.ts";
 
 export type MemoryScope = "project" | "global";
 export type MemoryAudience = "shared" | "agent";
@@ -385,7 +386,8 @@ export function createMemoryRoots(agentDir: string, projectPath: string): Memory
   if (isPathInside(resolvedProject, resolvedAgentDir) || isPathInside(resolvedProject, globalRoot)) {
     throw new Error("Workbench memory requires PI_CODING_AGENT_DIR and its memory root to remain outside the active project so child file tools cannot traverse protected storage.");
   }
-  const projectKey = createHash("sha256").update(resolvedProject).digest("hex").slice(0, 16);
+  const identityRoot = canonicalProjectRoot(resolvedProject);
+  const projectKey = createHash("sha256").update(identityRoot).digest("hex").slice(0, 16);
   return {
     globalRoot,
     projectRoot: canonicalMemoryPath(path.join(globalRoot, "projects", projectKey)),

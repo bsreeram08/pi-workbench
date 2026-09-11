@@ -62,4 +62,6 @@ Independent code review requires a canonical `<workflow-findings>` marker immedi
 
 If review misses a coupled file, check the host impact receipt's `dependents`. If that receipt's status is `unavailable`, inspect the working tree manually. The receipt is a map, not proof of completeness, and an empty or missing test-import list does not fail verification.
 
+Workbench QMD collections are named from the Git primary checkout, not the worktree path. Linked worktrees share `pi-workbench-state-*` / `pi-workbench-project-*` and the project memory store. After reload, a worktree that used path-hashed names still searches those as extras; new indexing goes to the shared pair. User-created collections (`DineManage`, `acquirer-docs`, …) stay separate; children do not search every QMD collection on the machine.
+
 If a writer continuation is unavailable after reload or a source change, inspect the partial/current work and assign a fresh bounded correction. Do not resend the original broad assignment automatically.
