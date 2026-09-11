@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/usage` looks up xAI quota for the active Grok parent: SuperGrok/included credits via the subscription login (CLI proxy `/user` then `/billing`, with required client headers), or prepaid API credit balance for `xai-` API keys. Auth failures tell you to `/login` instead of a generic connection error. Credentials are never displayed.
+
 - `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.
 
 - Installer `--full` copy now matches the shipped Grok 4.6 parent default. Read-only bash blocks `git worktree`. `--default` routing config refuses symlink paths. Child `qmd_search` is limited to this project's QMD collections. Main Pi notifies when `setModel` cannot apply the family parent.
