@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `/usage` looks up xAI quota for the active Grok parent: SuperGrok/included credits via the subscription login, or prepaid API credit balance for `xai-` API keys. Credentials are never displayed.
+- `/usage` looks up xAI quota for the active Grok parent: SuperGrok/included credits via the subscription login (CLI proxy `/user` then `/billing`, with required client headers), or prepaid API credit balance for `xai-` API keys. Auth failures tell you to `/login` instead of a generic connection error. Credentials are never displayed.
 
 - `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.
 
