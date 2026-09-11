@@ -320,13 +320,23 @@ describe("coding plan usage", () => {
       urls.push(String(input));
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBe("Bearer oauth-token");
+      expect(headers.get("X-XAI-Token-Auth")).toBe("xai-grok-cli");
+      if (String(input).endsWith("/user")) {
+        return new Response(JSON.stringify({ userId: "user-demo" }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      expect(headers.get("x-userid")).toBe("user-demo");
       return new Response(JSON.stringify({
         config: { creditUsagePercent: 10, prepaidBalance: { val: 100 } },
         subscriptionTier: "SuperGrok",
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
     const usage = await fetchXaiUsage({ token: "oauth-token", fetch: creditsFetch });
-    expect(urls).toEqual(["https://cli-chat-proxy.grok.com/v1/billing?format=credits"]);
+    expect(urls).toEqual([
+      "https://cli-chat-proxy.grok.com/v1/user",
+      "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+    ]);
     expect(usage.planType).toBe("SuperGrok");
 
     const apiUrls: string[] = [];

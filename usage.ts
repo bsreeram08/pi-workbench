@@ -6,7 +6,10 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const XAI_PROVIDER = "xai";
 const XAI_API_KEY_URL = "https://api.x.ai/v1/api-key";
 const XAI_MANAGEMENT_API = "https://management-api.x.ai";
-const XAI_GROK_CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const XAI_GROK_PROXY = "https://cli-chat-proxy.grok.com/v1";
+const XAI_GROK_CREDITS_URL = `${XAI_GROK_PROXY}/billing?format=credits`;
+const XAI_GROK_USER_URL = `${XAI_GROK_PROXY}/user`;
+const XAI_GROK_CLIENT_VERSION = "0.2.101";
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const REQUEST_TIMEOUT_MS = 10_000;
 const NETWORK_RETRY_DELAY_MS = 200;
@@ -304,15 +307,30 @@ export function parseXaiPrepaidBalance(payload: unknown, teamBlocked?: boolean):
   };
 }
 
+function grokCliProxyHeaders(userId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": `grok-shell/${XAI_GROK_CLIENT_VERSION}`,
+    "x-grok-client-identifier": "grok-shell",
+    "x-grok-client-version": XAI_GROK_CLIENT_VERSION,
+    "x-grok-client-mode": "interactive",
+    "X-XAI-Token-Auth": "xai-grok-cli",
+    "x-authenticateresponse": "authenticate-response",
+  };
+  if (userId) headers["x-userid"] = userId;
+  return headers;
+}
+
 async function jsonGet(
   url: string,
   token: string,
   request: Pick<UsageRequest, "headers" | "signal" | "timeoutMs" | "retryDelayMs" | "fetch">,
   unreachable: string,
   failed: (status: number) => string,
+  extraHeaders?: Record<string, string>,
 ): Promise<unknown> {
   const headers = new Headers();
-  for (const [name, value] of Object.entries(request.headers ?? {})) {
+  for (const [name, value] of Object.entries({ ...request.headers, ...extraHeaders })) {
     if (typeof value === "string") headers.set(name, value);
   }
   headers.set("Authorization", `Bearer ${token}`);
@@ -348,15 +366,31 @@ async function jsonGet(
 }
 
 export async function fetchXaiUsage(request: Omit<UsageRequest, "accountId" | "baseUrl"> & { baseUrl?: string }): Promise<CodingPlanUsage> {
+  if (typeof request.token !== "string" || !request.token) {
+    throw new SafeUsageError("xAI is not authenticated. Run /login first.");
+  }
   const token = request.token;
   const looksLikeApiKey = token.startsWith("xai-");
   const tryCredits = async (): Promise<CodingPlanUsage> => {
+    const user = await jsonGet(
+      XAI_GROK_USER_URL,
+      token,
+      request,
+      "Could not reach the xAI usage service.",
+      (status) => `xAI usage request failed (${status}). Run /login if the session expired.`,
+      grokCliProxyHeaders(),
+    );
+    const userId = isObject(user) ? pickString(user, "userId", "user_id") : undefined;
+    if (!userId || !/^[\x21-\x7e]{1,256}$/.test(userId)) {
+      throw new SafeUsageError("xAI account identity could not be verified. Run /login again.");
+    }
     const payload = await jsonGet(
       XAI_GROK_CREDITS_URL,
       token,
       request,
       "Could not reach the xAI usage service.",
       (status) => `xAI usage request failed (${status}). Run /login if the session expired.`,
+      grokCliProxyHeaders(userId),
     );
     return parseXaiGrokCredits(payload);
   };
@@ -527,9 +561,19 @@ export function registerUsageCommand(pi: ExtensionAPI, report: UsageReporter): v
       }
 
       try {
-        const resolved = await ctx.modelRegistry.getProviderAuth(providerId);
-        const token = resolved?.auth.apiKey;
-        if (!token) {
+        let resolved: { auth?: { apiKey?: string; headers?: Record<string, string | null | undefined>; baseUrl?: string } } | undefined;
+        try {
+          resolved = await ctx.modelRegistry.getProviderAuth(providerId);
+        } catch {
+          throw new SafeUsageError(
+            providerId === XAI_PROVIDER
+              ? "xAI authentication failed. Run /login again."
+              : "OpenAI Codex authentication failed. Run /login again.",
+          );
+        }
+        const auth = resolved?.auth;
+        const token = auth?.apiKey;
+        if (typeof token !== "string" || !token) {
           ctx.ui.notify(
             providerId === XAI_PROVIDER
               ? "xAI is not authenticated. Run /login first."
@@ -541,14 +585,14 @@ export function registerUsageCommand(pi: ExtensionAPI, report: UsageReporter): v
         const usage = providerId === XAI_PROVIDER
           ? await fetchXaiUsage({
             token,
-            headers: resolved.auth.headers,
-            baseUrl: resolved.auth.baseUrl,
+            headers: auth.headers,
+            baseUrl: auth.baseUrl,
           })
           : await fetchOpenAiCodexUsage({
-            baseUrl: resolved.auth.baseUrl ?? ctx.model?.baseUrl ?? "https://chatgpt.com/backend-api",
+            baseUrl: auth.baseUrl ?? ctx.model?.baseUrl ?? "https://chatgpt.com/backend-api",
             token,
             accountId: extractChatGptAccountId(token),
-            headers: resolved.auth.headers,
+            headers: auth.headers,
           });
         report("Coding plan usage", formatCodingPlanUsage(usage));
       } catch (error) {
