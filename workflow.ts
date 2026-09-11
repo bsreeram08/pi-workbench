@@ -57,7 +57,7 @@ import {
 } from "./workflow-task-packet.ts";
 import { loadConfig, type WorkbenchConfig } from "./config.ts";
 import type { WorkbenchDashboardController } from "./dashboard-controller.ts";
-import { ensureProjectState, findProjectRoot, getProjectPaths } from "./project.ts";
+import { ensureProjectState, findProjectRoot, getProjectPaths, resolveGitCheckoutRoot } from "./project.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { getCommunityKnowledgePath } from "./skill-evolution.ts";
 import { runSingleAgent } from "./subagents.ts";
@@ -1065,8 +1065,9 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   const startCoordinatorExecution = registerCoordinatorExecution(pi, {
     resolveProject, withLease, report,
     implement(project, state, task, model, signal, ctx, continuation) {
+      const root = state.execution?.implementationRoot ?? project.root;
       return coordinatorRole(state, ctx, (progress) => runRole(
-        project.root, project.config, "implementer", state.task,
+        root, project.config, "implementer", state.task,
         continuation
           ? `Main Pi's new bounded correction:\n${task}\nUse the retained task context, but execute only this correction. Do not replay the original assignment. Preserve approved constraints and unrelated work. Return evidence and unresolved questions to Main Pi.`
           : buildImplementationTask(state.task, state.plan, `Main Pi's bounded assignment:\n${task}\nDo only this slice; return evidence and open questions to Main Pi.${state.designBrief ? `\nApproved design brief:\n${JSON.stringify(state.designBrief)}` : ""}`, state.packet),
@@ -1077,14 +1078,15 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     verify(project, state, assessment, model, signal, ctx) {
       return coordinatorRole(state, ctx, async (progress) => {
         let impact: ImpactReceipt | undefined;
+        const root = state.execution?.implementationRoot ?? project.root;
         try {
-          const snapshot = await workspaceSnapshot(project.root);
+          const snapshot = await workspaceSnapshot(root);
           impact = await loadLatestImpactReceipt(path.join(project.workflowPaths.runs, state.id), snapshot);
         } catch { /* Review proceeds without a receipt when the artifact cannot be loaded. */ }
-        const reviews = await runRoleBatch(project.root, project.config,
+        const reviews = await runRoleBatch(root, project.config,
           reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\nPreserve deliberate design decisions; reject only concrete defects.` : "", state.packet, impact), model })),
           state.task, progress, "coordinator-review", "Independent review", signal);
-        const verification = await runRole(project.root, project.config, "quality-reviewer", state.task,
+        const verification = await runRole(root, project.config, "quality-reviewer", state.task,
           state.packet ? buildPacketVerificationTask(state.task, state.plan, "", state.packet) : buildIndependentVerificationTask(state.task, state.plan, ""),
           progress, "coordinator-verification", "Native verification", agentJobId("coordinator", "verification", Date.now()), signal);
         return { reviews, verification };
@@ -1300,7 +1302,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   });
 
   pi.registerCommand("review", {
-    description: "Run independent code review on the current working tree without a workflow ticket",
+    description: "Run independent code review on the current working tree without a workflow ticket; --root <git-toplevel> reviews another checkout without starting a second Pi",
     handler: async (rawArgs, ctx) => {
       const trustRequired = guardSubagentLaunch(ctx);
       if (trustRequired) {
@@ -1308,10 +1310,13 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         return;
       }
       const project = await resolveProject(ctx);
-      const focus = rawArgs.trim() || "Review the current working tree against repository standards and the user's request.";
-      const snapshot = await workspaceSnapshot(project.root).catch(() => "");
-      const changes = await listWorkingTreeChanges(project.root);
-      const impact = await buildImpactReceipt({ root: project.root, snapshot, changes });
+      const rooted = rawArgs.trim().match(/^--root\s+(\S+)\s*(.*)$/);
+      const requestedRoot = rooted?.[1];
+      const focus = (rooted ? rooted[2] : rawArgs).trim() || "Review the current working tree against repository standards and the user's request.";
+      const workRoot = await resolveGitCheckoutRoot(requestedRoot, project.root);
+      const snapshot = await workspaceSnapshot(workRoot).catch(() => "");
+      const changes = await listWorkingTreeChanges(workRoot);
+      const impact = await buildImpactReceipt({ root: workRoot, snapshot, changes });
       const state = await loadCurrentWorkflowPlan(project.workflowPaths);
       const plan = state?.plan?.trim()
         ? state.plan
@@ -1320,7 +1325,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       const progress = progressFor(pi, ctx, "Independent review", focus, "review");
       try {
         const reviews = await runRoleBatch(
-          project.root,
+          workRoot,
           project.config,
           reviewRoles(project.config).map((role) => ({
             role,

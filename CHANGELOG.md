@@ -2,20 +2,16 @@
 
 ## Unreleased
 
+- `/qmd` opens a read-only localhost catalog of QMD collections, files, and search at 127.0.0.1 so you can judge empty, stale, or duplicate indexes in a browser.
+- QMD and project memory identity follow the Git primary checkout, so linked worktrees share the same `pi-workbench-state-*` / `pi-workbench-project-*` collections and memory store. A worktree that already had path-hashed collections keeps those names as extra search targets while new writes go to the shared pair.
+- Independent review and Coordinator execute can bind to another Git checkout via `/review --root` and `workbench_execute` `root`. Children and native inspect run in that toplevel so a plan hosted in one repo can review work that lives in another, without starting a second Pi. The path must be a real Git toplevel, not a symlink.
 - `/usage` looks up xAI quota for the active Grok parent: SuperGrok/included credits via the subscription login (CLI proxy `/user` then `/billing`, with required client headers), or prepaid API credit balance for `xai-` API keys. Auth failures tell you to `/login` instead of a generic connection error. Credentials are never displayed.
-
 - `/review [focus]` runs independent code review on the current working tree without an approved plan or completion ticket. Host impact receipts and grounded findings still apply.
-
 - Installer `--full` copy now matches the shipped Grok 4.6 parent default. Read-only bash blocks `git worktree`. `--default` routing config refuses symlink paths. Child `qmd_search` is limited to this project's QMD collections. Main Pi notifies when `setModel` cannot apply the family parent.
-
 - Give the exclusive-restore updater rollback tests a 30-second deadline each. The expected-absent config race finished in just over 10 seconds on CI and was reported as a timeout rather than an assertion failure.
-
 - After each writer, the host records an impact receipt (changed TypeScript/JavaScript exports, import-graph dependents, coarse blast radius) and prepends a HOST IMPACT RECEIPT map onto independent code review. It is navigation only and cannot authorize completion.
-
 - Independent code review now requires a canonical `<workflow-findings>` envelope immediately before the terminal `<code-verdict>`. The host grounds claimed line ranges against current project files; a missing, reordered, contradictory, or ungrounded envelope is a protocol failure, not a `PASS` and not a product `CHANGES_REQUIRED`. Recover once for the same workspace; do not rewrite product code to repair the protocol.
-
-- `/model-routing` family and fixed routes now move Main Pi with children. `--default` still writes the git-root project config; `session_start` applies the parent. Shipped installer default is `xai/grok-4.6` at high thinking. Coordinator prompts no longer recommend `gpt-6-astra` unless the user asked for that exact model. Isolated work is directed to `./.worktrees/<name>` inside the project with `.worktrees/` gitignored; the agent must not send the user to a second Pi session.
-
+- `/model-routing` family and fixed routes now move Main Pi with children. `--default` still writes the git-root project config; `session_start` applies the parent. Shipped installer default is `xai/grok-4.6` at high thinking. Coordinator prompts no longer recommend `gpt-6-astra` unless the user asked for that exact model. Isolated work is directed to `./.worktrees/<name>` inside the project with `.worktrees/` gitignored; the agent must not send the user to a second Pi session.\
 - Split concurrent updater rollback scenarios into independent tests with their own deadlines. CI stops on the first test failure so timeout cleanup errors cannot obscure the initial failure behind the overall job deadline.
 
 ## 0.7.0 — 2026-09-07
