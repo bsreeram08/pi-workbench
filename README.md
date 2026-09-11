@@ -158,7 +158,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/skills-evolve` | Stage trusted skill updates |
 | `/skills-evolution-status` | Trusted sources and audit |
 | `/workbench-update [status\|apply]` | Inspect or confirm a trusted update |
-| `/usage` | Coding-plan quota for the active provider |
+| `/usage` | Coding-plan quota for OpenAI Codex or xAI (Grok subscription credits or API prepaid balance) |
 
 ## First-party tools
 

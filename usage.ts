@@ -3,6 +3,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
+const XAI_PROVIDER = "xai";
+const XAI_API_KEY_URL = "https://api.x.ai/v1/api-key";
+const XAI_MANAGEMENT_API = "https://management-api.x.ai";
+const XAI_GROK_CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const REQUEST_TIMEOUT_MS = 10_000;
 const NETWORK_RETRY_DELAY_MS = 200;
@@ -29,6 +33,7 @@ export interface CodingPlanUsage {
   allowed: boolean | undefined;
   limitReached: boolean | undefined;
   windows: UsageWindow[];
+  prepaidCreditsUsd?: number;
 }
 
 export interface UsageRequest {
@@ -201,6 +206,212 @@ export async function fetchOpenAiCodexUsage(request: UsageRequest): Promise<Codi
   return parseOpenAiCodexUsage(payload);
 }
 
+function centValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
+  if (!isObject(value)) return undefined;
+  const raw = value.val;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && /^-?\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+  return undefined;
+}
+
+function pickObject(value: unknown, ...keys: string[]): JsonObject | undefined {
+  if (!isObject(value)) return undefined;
+  for (const key of keys) {
+    if (isObject(value[key])) return value[key];
+  }
+  return undefined;
+}
+
+function pickString(value: JsonObject, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const raw = value[key];
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
+  return undefined;
+}
+
+function pickNumber(value: JsonObject, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const raw = finiteNumber(value[key]);
+    if (raw !== undefined) return raw;
+  }
+  return undefined;
+}
+
+export function parseXaiGrokCredits(payload: unknown): CodingPlanUsage {
+  if (!isObject(payload)) throw new SafeUsageError("xAI returned an invalid usage response.");
+  const config = pickObject(payload, "config") ?? payload;
+  const percent = pickNumber(config, "creditUsagePercent", "credit_usage_percent");
+  const period = pickObject(config, "currentPeriod", "current_period");
+  const end = (period && pickString(period, "end"))
+    ?? pickString(config, "billingPeriodEnd", "billing_period_end");
+  const start = (period && pickString(period, "start"))
+    ?? pickString(config, "billingPeriodStart", "billing_period_start");
+  const usedCents = centValue(config.used);
+  const limitCents = centValue(config.monthlyLimit ?? config.monthly_limit);
+  let usedPercent = percent !== undefined ? percentage(percent) : undefined;
+  if (usedPercent === undefined && usedCents !== undefined && limitCents && limitCents > 0) {
+    usedPercent = percentage((usedCents / limitCents) * 100);
+  }
+  const resetAtMs = end ? Date.parse(end) : Number.NaN;
+  const startMs = start ? Date.parse(start) : Number.NaN;
+  const resetAtSeconds = Number.isFinite(resetAtMs) ? Math.max(0, Math.round(resetAtMs / 1000)) : 0;
+  const windowSeconds = Number.isFinite(startMs) && resetAtSeconds > 0
+    ? Math.max(0, resetAtSeconds - Math.round(startMs / 1000))
+    : 604_800;
+  const windows: UsageWindow[] = [];
+  if (usedPercent !== undefined) {
+    windows.push({
+      group: "Included credits",
+      allowed: usedPercent < 100,
+      limitReached: usedPercent >= 100,
+      usedPercent,
+      remainingPercent: 100 - usedPercent,
+      windowSeconds,
+      resetAfterSeconds: resetAtSeconds > 0 ? Math.max(0, resetAtSeconds - Math.round(Date.now() / 1000)) : 0,
+      resetAtSeconds,
+    });
+  }
+  const prepaid = centValue(config.prepaidBalance ?? config.prepaid_balance);
+  const tier = pickString(payload, "subscriptionTier", "subscription_tier") ?? "Grok";
+  if (usedPercent === undefined && prepaid === undefined && windows.length === 0) {
+    throw new SafeUsageError("xAI returned an invalid usage response.");
+  }
+  return {
+    provider: "xAI",
+    planType: tier,
+    allowed: usedPercent === undefined ? (prepaid !== undefined ? prepaid > 0 : undefined) : usedPercent < 100,
+    limitReached: usedPercent !== undefined ? usedPercent >= 100 : prepaid !== undefined ? prepaid <= 0 : undefined,
+    windows,
+    prepaidCreditsUsd: prepaid !== undefined ? Math.max(0, prepaid) / 100 : undefined,
+  };
+}
+
+export function parseXaiPrepaidBalance(payload: unknown, teamBlocked?: boolean): CodingPlanUsage {
+  if (!isObject(payload)) throw new SafeUsageError("xAI returned an invalid usage response.");
+  const total = centValue(pickObject(payload, "total") ?? payload.total);
+  if (total === undefined) throw new SafeUsageError("xAI returned an invalid usage response.");
+  const remainingUsd = Math.abs(total) / 100;
+  return {
+    provider: "xAI",
+    planType: "API prepaid",
+    allowed: teamBlocked === true ? false : remainingUsd > 0,
+    limitReached: teamBlocked === true || remainingUsd <= 0,
+    windows: [],
+    prepaidCreditsUsd: remainingUsd,
+  };
+}
+
+async function jsonGet(
+  url: string,
+  token: string,
+  request: Pick<UsageRequest, "headers" | "signal" | "timeoutMs" | "retryDelayMs" | "fetch">,
+  unreachable: string,
+  failed: (status: number) => string,
+): Promise<unknown> {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers ?? {})) {
+    if (typeof value === "string") headers.set(name, value);
+  }
+  headers.set("Authorization", `Bearer ${token}`);
+  headers.set("Accept", "application/json");
+  const timeoutSignal = AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  const signal = request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal;
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await (request.fetch ?? globalThis.fetch)(url, { method: "GET", headers, signal });
+      break;
+    } catch (error) {
+      if (attempt === 1 || signal.aborted) {
+        if (timeoutSignal.aborted) throw new SafeUsageError("xAI usage request timed out.");
+        if (request.signal?.aborted) throw new SafeUsageError("xAI usage request was cancelled.");
+        throw new SafeUsageError(unreachable);
+      }
+      try {
+        await delay(request.retryDelayMs ?? NETWORK_RETRY_DELAY_MS, undefined, { signal });
+      } catch {
+        throw new SafeUsageError(unreachable);
+      }
+    }
+  }
+  if (!response) throw new SafeUsageError(unreachable);
+  if (!response.ok) throw new SafeUsageError(failed(response.status));
+  try {
+    return await response.json();
+  } catch (error) {
+    if (signal.aborted) throw new SafeUsageError("xAI usage request timed out.");
+    throw new SafeUsageError("xAI returned an invalid usage response.");
+  }
+}
+
+export async function fetchXaiUsage(request: Omit<UsageRequest, "accountId" | "baseUrl"> & { baseUrl?: string }): Promise<CodingPlanUsage> {
+  const token = request.token;
+  const looksLikeApiKey = token.startsWith("xai-");
+  const tryCredits = async (): Promise<CodingPlanUsage> => {
+    const payload = await jsonGet(
+      XAI_GROK_CREDITS_URL,
+      token,
+      request,
+      "Could not reach the xAI usage service.",
+      (status) => `xAI usage request failed (${status}). Run /login if the session expired.`,
+    );
+    return parseXaiGrokCredits(payload);
+  };
+  const tryPrepaid = async (): Promise<CodingPlanUsage> => {
+    const keyInfo = await jsonGet(
+      XAI_API_KEY_URL,
+      token,
+      request,
+      "Could not reach the xAI usage service.",
+      (status) => `xAI usage request failed (${status}). Run /login if the session expired.`,
+    );
+    if (!isObject(keyInfo)) throw new SafeUsageError("xAI returned an invalid usage response.");
+    const teamId = pickString(keyInfo, "team_id", "teamId");
+    const blocked = keyInfo.api_key_blocked === true || keyInfo.team_blocked === true
+      || keyInfo.apiKeyBlocked === true || keyInfo.teamBlocked === true;
+    if (!teamId) {
+      return {
+        provider: "xAI",
+        planType: "API key",
+        allowed: blocked ? false : undefined,
+        limitReached: blocked ? true : undefined,
+        windows: [],
+      };
+    }
+    const prepaid = await jsonGet(
+      `${XAI_MANAGEMENT_API}/v1/billing/teams/${encodeURIComponent(teamId)}/prepaid/balance`,
+      token,
+      request,
+      "Could not reach the xAI usage service.",
+      (status) => `xAI prepaid-credit lookup failed (${status}). Check console.x.ai or use a management-capable credential.`,
+    );
+    return parseXaiPrepaidBalance(prepaid, blocked);
+  };
+
+  if (looksLikeApiKey) {
+    try {
+      return await tryPrepaid();
+    } catch (error) {
+      if (error instanceof SafeUsageError && /failed \(4\d\d\)/.test(error.message)) {
+        try { return await tryCredits(); } catch { throw error; }
+      }
+      throw error;
+    }
+  }
+  try {
+    return await tryCredits();
+  } catch (error) {
+    try {
+      return await tryPrepaid();
+    } catch {
+      throw error;
+    }
+  }
+}
+
 function titleCasePlan(planType: string): string {
   const known: Record<string, string> = {
     prolite: "Pro Lite",
@@ -275,19 +486,22 @@ export function formatCodingPlanUsage(usage: CodingPlanUsage, nowMs = Date.now()
     "",
   ];
 
-  if (usage.windows.length === 0) {
-    lines.push("No usage-window details were returned by the provider.");
-    return lines.join("\n");
+  if (usage.prepaidCreditsUsd !== undefined) {
+    lines.push(`**Prepaid credits:** $${usage.prepaidCreditsUsd.toFixed(2)}`);
   }
 
-  lines.push("| Limit | Status | Remaining | Used | Resets |", "|---|---|---:|---:|---|");
-  for (const window of usage.windows) {
-    const label = window.group === "Coding plan"
-      ? windowLabel(window.windowSeconds)
-      : `${window.group} · ${windowLabel(window.windowSeconds)}`;
-    lines.push(
-      `| ${markdownCell(label)} | ${statusLabel(window.allowed, window.limitReached)} | **${window.remainingPercent}%** | ${window.usedPercent}% | ${resetDescription(window, nowMs)} |`,
-    );
+  if (usage.windows.length === 0) {
+    if (usage.prepaidCreditsUsd === undefined) lines.push("No usage-window details were returned by the provider.");
+  } else {
+    lines.push("| Limit | Status | Remaining | Used | Resets |", "|---|---|---:|---:|---|");
+    for (const window of usage.windows) {
+      const label = window.group === "Coding plan"
+        ? windowLabel(window.windowSeconds)
+        : `${window.group} · ${windowLabel(window.windowSeconds)}`;
+      lines.push(
+        `| ${markdownCell(label)} | ${statusLabel(window.allowed, window.limitReached)} | **${window.remainingPercent}%** | ${window.usedPercent}% | ${resetDescription(window, nowMs)} |`,
+      );
+    }
   }
   lines.push("", "Provider quota is fetched only when `/usage` is run; credentials are never displayed or stored by Workbench.");
   return lines.join("\n");
@@ -306,7 +520,7 @@ export function registerUsageCommand(pi: ExtensionAPI, report: UsageReporter): v
         ctx.ui.notify("No active model is selected.", "warning");
         return;
       }
-      if (providerId !== OPENAI_CODEX_PROVIDER) {
+      if (providerId !== OPENAI_CODEX_PROVIDER && providerId !== XAI_PROVIDER) {
         const provider = ctx.modelRegistry.getProviderDisplayName(providerId);
         report("Coding plan usage", `Usage lookup is not yet supported for **${markdownText(provider)}**.`);
         return;
@@ -316,17 +530,26 @@ export function registerUsageCommand(pi: ExtensionAPI, report: UsageReporter): v
         const resolved = await ctx.modelRegistry.getProviderAuth(providerId);
         const token = resolved?.auth.apiKey;
         if (!token) {
-          ctx.ui.notify("OpenAI Codex is not authenticated. Run /login first.", "warning");
+          ctx.ui.notify(
+            providerId === XAI_PROVIDER
+              ? "xAI is not authenticated. Run /login first."
+              : "OpenAI Codex is not authenticated. Run /login first.",
+            "warning",
+          );
           return;
         }
-        const accountId = extractChatGptAccountId(token);
-        const baseUrl = resolved.auth.baseUrl ?? ctx.model?.baseUrl ?? "https://chatgpt.com/backend-api";
-        const usage = await fetchOpenAiCodexUsage({
-          baseUrl,
-          token,
-          accountId,
-          headers: resolved.auth.headers,
-        });
+        const usage = providerId === XAI_PROVIDER
+          ? await fetchXaiUsage({
+            token,
+            headers: resolved.auth.headers,
+            baseUrl: resolved.auth.baseUrl,
+          })
+          : await fetchOpenAiCodexUsage({
+            baseUrl: resolved.auth.baseUrl ?? ctx.model?.baseUrl ?? "https://chatgpt.com/backend-api",
+            token,
+            accountId: extractChatGptAccountId(token),
+            headers: resolved.auth.headers,
+          });
         report("Coding plan usage", formatCodingPlanUsage(usage));
       } catch (error) {
         ctx.ui.notify(usageCommandErrorMessage(error), "error");

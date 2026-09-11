@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   extractChatGptAccountId,
   fetchOpenAiCodexUsage,
+  fetchXaiUsage,
   formatCodingPlanUsage,
   parseOpenAiCodexUsage,
+  parseXaiGrokCredits,
+  parseXaiPrepaidBalance,
   usageCommandErrorMessage,
 } from "../usage.ts";
 
@@ -280,5 +283,68 @@ describe("coding plan usage", () => {
       timeoutMs: 60_000,
       fetch: waitingFetch,
     })).rejects.toThrow("cancelled");
+  });
+
+  test("parses xAI SuperGrok credits and prepaid API balance", () => {
+    const credits = parseXaiGrokCredits({
+      subscriptionTier: "SuperGrok",
+      config: {
+        creditUsagePercent: 42.5,
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          start: "2026-06-01T00:00:00Z",
+          end: "2026-06-08T00:00:00Z",
+        },
+        prepaidBalance: { val: 1250 },
+      },
+    });
+    expect(credits.provider).toBe("xAI");
+    expect(credits.planType).toBe("SuperGrok");
+    expect(credits.windows[0]?.usedPercent).toBe(43);
+    expect(credits.windows[0]?.remainingPercent).toBe(57);
+    expect(credits.prepaidCreditsUsd).toBe(12.5);
+    const report = formatCodingPlanUsage(credits, Date.parse("2026-06-04T00:00:00Z"));
+    expect(report).toContain("**Prepaid credits:** $12.50");
+    expect(report).toContain("Included credits");
+
+    const prepaid = parseXaiPrepaidBalance({ total: { val: "-2317" } });
+    expect(prepaid.planType).toBe("API prepaid");
+    expect(prepaid.prepaidCreditsUsd).toBe(23.17);
+    expect(prepaid.allowed).toBe(true);
+    expect(formatCodingPlanUsage(prepaid)).toContain("$23.17");
+  });
+
+  test("fetches xAI subscription credits then API prepaid without leaking the token", async () => {
+    const urls: string[] = [];
+    const creditsFetch: typeof fetch = async (input, init) => {
+      urls.push(String(input));
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer oauth-token");
+      return new Response(JSON.stringify({
+        config: { creditUsagePercent: 10, prepaidBalance: { val: 100 } },
+        subscriptionTier: "SuperGrok",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const usage = await fetchXaiUsage({ token: "oauth-token", fetch: creditsFetch });
+    expect(urls).toEqual(["https://cli-chat-proxy.grok.com/v1/billing?format=credits"]);
+    expect(usage.planType).toBe("SuperGrok");
+
+    const apiUrls: string[] = [];
+    const apiFetch: typeof fetch = async (input) => {
+      apiUrls.push(String(input));
+      if (String(input).endsWith("/api-key")) {
+        return new Response(JSON.stringify({ team_id: "team-demo", api_key_blocked: false }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ total: { val: "-500" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const prepaid = await fetchXaiUsage({ token: "xai-secret-key", fetch: apiFetch });
+    expect(apiUrls[0]).toBe("https://api.x.ai/v1/api-key");
+    expect(apiUrls[1]).toContain("/v1/billing/teams/team-demo/prepaid/balance");
+    expect(prepaid.prepaidCreditsUsd).toBe(5);
+    expect(JSON.stringify(apiUrls)).not.toContain("xai-secret-key");
   });
 });
