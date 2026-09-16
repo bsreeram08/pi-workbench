@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir, parseFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { formatSkillScanFailure, scanSkillTree } from "./skill-scan.ts";
 
 export interface TrustedSkillSource {
   source: string;
@@ -233,6 +234,8 @@ async function validateStagedSkill(name: string, sourceDir: string): Promise<voi
   if (declaredName !== name) throw new Error(`Staged skill ${name} declares a different name: ${declaredName ?? "missing"}`);
   if (!description) throw new Error(`Staged skill ${name} has no description`);
   await directoryStats(sourceDir);
+  const findings = await scanSkillTree(sourceDir);
+  if (findings.length > 0) throw new Error(formatSkillScanFailure(name, findings));
 }
 
 async function appendAudit(entry: Record<string, unknown>, auditPath = AUDIT_PATH): Promise<void> {

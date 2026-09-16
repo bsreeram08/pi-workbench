@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-09-16
+
+- Added first-party instincts (`workbench_instincts`, `/instincts`): atomic learned behaviors with confidence, stored outside the project. Injected as fallible hints, never instructions. Duplicate retain reinforces; contradict lowers confidence. Instincts do not promote themselves into skills or memory.
+- `/skills-evolve` now fails closed on staged skills that contain prompt-injection, remote-shell, hidden Unicode, or credential-shaped content.
 - `/qmd` opens a read-only localhost catalog of QMD collections, files, and search at 127.0.0.1 so you can judge empty, stale, or duplicate indexes in a browser.
 - QMD and project memory identity follow the Git primary checkout, so linked worktrees share the same `pi-workbench-state-*` / `pi-workbench-project-*` collections and memory store. A worktree that already had path-hashed collections keeps those names as extra search targets while new writes go to the shared pair.
 - Independent review and Coordinator execute can bind to another Git checkout via `/review --root` and `workbench_execute` `root`. Children and native inspect run in that toplevel so a plan hosted in one repo can review work that lives in another, without starting a second Pi. The path must be a real Git toplevel, not a symlink.

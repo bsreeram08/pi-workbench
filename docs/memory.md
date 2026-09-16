@@ -1,6 +1,8 @@
 # Sreeram's Pi Workbench Memory Model
 
-Workbench memory is a native TypeScript persistence module for durable agent findings. It is separate from Pi sessions, workflow artifacts, research evidence, and explicit user preferences.
+Workbench memory is a native TypeScript persistence module for durable agent findings. It is separate from Pi sessions, workflow artifacts, research evidence, continuity cases, learned instincts, and explicit user preferences.
+
+Instincts (`workbench_instincts`) are a third class: atomic trigger → action behaviors with confidence. They are fallible hints injected into Main Pi, never instructions, and they never promote themselves into shared memory or skills. Durable facts still require Coordinator review through `workbench_memory`.
 
 ## Trust model
 
