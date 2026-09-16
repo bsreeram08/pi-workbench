@@ -6,6 +6,7 @@ import { loadConfig } from "./config.ts";
 import { findProjectRoot, getProjectPaths } from "./project.ts";
 import { MODEL_ROUTING_RECEIPT_ENTRY } from "./model-routing.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
+import { authorizeSpawnTool } from "./spawn-policy.ts";
 import { formatRoutingReceipt, routeTask, type ModelRoutingState, type RoutingEffort } from "./routing.ts";
 import { AgentRunManager } from "./agent-run-manager.ts";
 import { getWorkflowAgentProfile, requireAvailableDelegationModel, resolveWorkflowAgent, WORKFLOW_AGENT_IDS, type WorkflowAgentId } from "./workflow-agents.ts";
@@ -71,6 +72,7 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
           details: { blocked: true, reason: "project-trust-required" },
         };
       }
+      await authorizeSpawnTool(ctx, 1);
       requireAvailableDelegationModel(ctx, params.model);
       const root = await findProjectRoot(ctx.cwd, exec);
       const config = await loadConfig(getProjectPaths(root));

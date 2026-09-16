@@ -142,6 +142,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/qmd` | Open a localhost QMD catalog (collections, files, search, preview) |
 | `/autopilot [task]` | Plan, implement, review, and verify in one run |
 | `/automode [on\|off\|status]` | Keep this Coordinator session moving with conservative defaults |
+| `/spawn [always\|ask\|never\|auto]` | When Main Pi may spawn specialists. `fanout N` caps parallel lanes; `this always` is this session only |
 | `/workflow-status` | Current plan state and evidence paths |
 | `/preferences` | Durable user operating preferences |
 | `/remember [preference]` | Teach an explicit preference |

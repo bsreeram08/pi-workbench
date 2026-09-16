@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/spawn` is a user-owned specialist policy: durable `always|ask|never|auto`, `fanout 1-6`, and `/spawn this …` for the current session. `never` blocks `delegate_task` and `workbench_agent_start`; explicit `/delegate`, `/plan`, and `/start-work` still run. Default remains `auto`.
+
 ## 0.8.1 — 2026-09-16
 
 - `/workbench-update` names the actual block instead of a silent unknown install: leftover project writers (`WRITERS_ACTIVE`), a held update lock (`LOCK_BLOCKED`), and a checkout that is not `main` (`NOT_ON_MAIN`). It still does not take over markers.
