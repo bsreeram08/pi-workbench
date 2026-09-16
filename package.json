@@ -1,6 +1,6 @@
 {
   "name": "pi-workbench",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Sreeram's personal Pi profile for planning, research, delegated implementation, recorded verification, and durable context.",
   "private": true,
   "type": "module",
