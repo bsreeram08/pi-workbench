@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/spawn` is a user-owned specialist policy: durable `always|ask|never|auto`, `fanout 1-6`, and `/spawn this …` for the current session. `never` blocks `delegate_task` and `workbench_agent_start`; explicit `/delegate`, `/plan`, and `/start-work` still run. Default remains `auto`.
+
 ## 0.8.0 — 2026-09-16
 
 - Added first-party instincts (`workbench_instincts`, `/instincts`): atomic learned behaviors with confidence, stored outside the project. Injected as fallible hints, never instructions. Duplicate retain reinforces; contradict lowers confidence. Instincts do not promote themselves into skills or memory.

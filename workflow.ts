@@ -59,6 +59,7 @@ import { loadConfig, type WorkbenchConfig } from "./config.ts";
 import type { WorkbenchDashboardController } from "./dashboard-controller.ts";
 import { ensureProjectState, findProjectRoot, getProjectPaths, resolveGitCheckoutRoot } from "./project.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
+import { authorizeSpawnTool } from "./spawn-policy.ts";
 import { getCommunityKnowledgePath } from "./skill-evolution.ts";
 import { runSingleAgent } from "./subagents.ts";
 import type { AgentRunContext } from "./agent-run-manager.ts";
@@ -1126,6 +1127,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
           details: { mode: hasParallel ? "parallel" : "single", results: [], routes: [], blocked: trustRequired },
         };
       }
+      await authorizeSpawnTool(ctx, hasParallel ? params.tasks!.length : 1);
       if (hasParallel && params.model !== undefined) throw new Error("For parallel delegation, set model on each tasks[] entry.");
       for (const item of params.tasks ?? [{ model: params.model }]) requireAvailableDelegationModel(ctx, item.model);
       const project = await resolveProject(ctx);
