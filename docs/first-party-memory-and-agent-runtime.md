@@ -1,6 +1,6 @@
 # First-party memory and interactive-agent roadmap
 
-> Status: Agent Runtime, interactive cmux Pi TUI sessions, Cases, and first-party todo/ask/goal are on `main`. `pi-subagents`, `pi-goal`, `rpiv-todo`, and `rpiv-ask-user-question` are replaced. Session Observations, persistent mutation agents, and the remaining companion packages are later slices.
+> Status: Agent Runtime, interactive cmux Pi TUI sessions, Cases, Instincts, and first-party todo/ask/goal are on `main`. `pi-subagents`, `pi-goal`, `rpiv-todo`, and `rpiv-ask-user-question` are replaced. Session Observations (transcript-chunk observers), persistent mutation agents, and the remaining companion packages are later slices. Instincts are explicit retain/reinforce/contradict behaviors, not automatic transcript consolidation.
 > Product map: [`README.md`](../README.md). Trust boundaries: [`SECURITY.md`](../SECURITY.md). Memory lifecycle: [`memory.md`](memory.md).
 > Current child-context behavior and limits: [Child instructions and skills](child-context.md). Operational checks and launch failures: [Testing](testing-harness.md) and [Troubleshooting](troubleshooting.md). The pre-runtime baseline below is historical design context, not a list of outstanding defects.
 > Reference snapshots (untrusted, not installed): `pi-observational-memory@78a1efcfdd46`, `pi-interactive-subagents@c3e8b53c0754`, upstream cmux adapter `HazAT/pi-interactive-subagents@c100577ebf73`.

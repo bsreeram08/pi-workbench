@@ -19,6 +19,7 @@ Do not `pi install npm:pi-workbench`. Use the recursive Git installation below; 
 | Agents | `delegate_task`, `workbench_agent_*` | One AgentRunManager. Inside cmux, children are real Pi TUI tabs |
 | Session | `workbench_todo`, `workbench_ask`, `workbench_goal` | Task list, structured questions, user-created goals |
 | Continuity | `workbench_cases`, `/cases` | Intent → action → outcome → gap. Not memory |
+| Instincts | `workbench_instincts`, `/instincts` | Learned behaviors with confidence. Hints, not instructions |
 | Memory | `workbench_memory`, `/memory` | Reviewed, fallible, isolated by default |
 | Planning | `/plan`, `/start-work`, `/autopilot`, `/council` | Intent, isolated implementation, independent verification |
 | Verification | `workbench_verify` | Recorded commands, exit status, output artifacts, and code fingerprints |
@@ -40,7 +41,7 @@ Trust, child isolation, and cmux identity rules live in [`SECURITY.md`](SECURITY
 4. Implementation starts from an approved `Intent.md` or an approved workflow plan.
 5. Parallel writers use isolated Git worktrees. Persistent mutation agents stay deferred.
 6. Completion needs independent review and native check receipts tied to unchanged code. A zero exit proves execution; review must still judge whether the tests cover the requested behavior.
-7. Recalled memory is fallible data. Verify consequential claims against the workspace.
+7. Recalled memory is fallible data. Verify consequential claims against the workspace. Instincts are learned behaviors, not instructions.
 8. Child model routing is per lane (complexity, uncertainty, risk, breadth, verification cost). Role names do not lock a model.
 9. Explicit user preferences outrank generic defaults.
 10. New skills from trusted sources are staged, validated, backed up, and audit-logged.
@@ -146,6 +147,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/remember [preference]` | Teach an explicit preference |
 | `/memory [query]` | Memory status, pending proposals, or recall |
 | `/cases [status\|recall [query]]` | Continuity cases |
+| `/instincts [status\|recall [query]]` | Learned behaviors with confidence |
 | `/council [idea]` | Visible council pass, then Intent.md |
 | `/council-implement` | One isolated writer by default after approved intent; parallel candidates are opt-in |
 | `/council-force-complete [reason]` | Recorded verification override |
@@ -176,6 +178,7 @@ Prefer these over leftover third-party names:
 - `workbench_ask` — up to four structured questions when a real decision is required.
 - `workbench_goal` — get/complete/pause/resume. Create with `/goals-set`.
 - `workbench_cases` — retain/recall continuity.
+- `workbench_instincts` — retain/recall/contradict learned behaviors.
 - `workbench_memory` — reviewed durable memory.
 - `ask_parent` — one child question back to the Coordinator.
 
