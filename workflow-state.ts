@@ -40,6 +40,7 @@ export interface WorkflowExecutionState {
   summary?: string;
   packetVerification?: WorkflowPacketVerification;
   review?: WorkflowReviewAttempt;
+  implementationRoot?: string;
 }
 
 export interface WorkflowPlanState {
@@ -145,7 +146,8 @@ function expectedPlanPath(paths: WorkflowPaths, id: string): string {
 }
 
 function validExecution(value: unknown, packet: WorkflowTaskPacket | undefined): value is WorkflowExecutionState {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["startedAt", "completedAt", "attempts", "verificationPassed", "summary", "packetVerification", "review"])) return false;
+  if (!isRecord(value) || !hasOnlyKeys(value, ["startedAt", "completedAt", "attempts", "verificationPassed", "summary", "packetVerification", "review", "implementationRoot"])) return false;
+  if (value.implementationRoot !== undefined && (typeof value.implementationRoot !== "string" || !value.implementationRoot.trim() || value.implementationRoot.includes("\0"))) return false;
   if (value.review !== undefined && !validReviewAttempt(value.review)) return false;
   if (!isIso(value.startedAt)
     || (value.completedAt !== undefined && (!isIso(value.completedAt) || Date.parse(value.completedAt) < Date.parse(value.startedAt)))

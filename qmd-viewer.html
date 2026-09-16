@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QMD catalog</title>
+  <style>
+    :root {
+      --bg: #14110d;
+      --panel: #1c1812;
+      --ink: #efe6d6;
+      --muted: #9a8f7c;
+      --line: #3a3328;
+      --accent: #d4a017;
+      --warn: #c45c26;
+      --ok: #7a9e6a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.45 "Iowan Old Style", "Palatino Linotype", Palatino, serif; }
+    header {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+      padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--line); background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+    header p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+    .shell { display: grid; grid-template-columns: 16rem 22rem 1fr; height: calc(100% - 3.1rem); }
+    aside, .files, article { overflow: auto; min-width: 0; }
+    aside { border-right: 1px solid var(--line); padding: 0.6rem; }
+    .files { border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+    .search { display: flex; gap: 0.4rem; padding: 0.6rem; border-bottom: 1px solid var(--line); }
+    .search input { flex: 1; background: var(--bg); color: var(--ink); border: 1px solid var(--line); padding: 0.45rem 0.55rem; border-radius: 2px; font: 13px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .search button, .chip { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 0.4rem 0.6rem; cursor: pointer; }
+    .list { padding: 0.35rem; }
+    .card, .file {
+      width: 100%; text-align: left; background: transparent; color: inherit; border: 0; border-bottom: 1px solid #2a241c;
+      padding: 0.55rem 0.45rem; cursor: pointer; display: block;
+    }
+    .card.active, .file.active { background: #2a2318; }
+    .card .name { font-weight: 600; }
+    .meta { color: var(--muted); font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 0.15rem; }
+    .empty { color: var(--warn); }
+    .wb { color: var(--accent); }
+    article { padding: 1.25rem 1.5rem 3rem; }
+    article pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    article h2 { font-size: 1.15rem; margin: 0 0 0.35rem; }
+    .err { color: var(--warn); padding: 1rem; }
+    @media (max-width: 960px) { .shell { grid-template-columns: 1fr; } aside, .files { max-height: 30vh; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QMD catalog</h1>
+    <p>Local index only · 127.0.0.1 · read-only</p>
+  </header>
+  <div class="shell">
+    <aside id="collections"></aside>
+    <section class="files">
+      <form class="search" id="search-form">
+        <input id="q" placeholder="Search this collection…" autocomplete="off" />
+        <button type="submit">Search</button>
+      </form>
+      <div class="list" id="files"></div>
+    </section>
+    <article id="reader"><p class="meta">Pick a collection, then a file. Empty and stale collections are marked so you can prune them.</p></article>
+  </div>
+  <script>
+    const collectionsEl = document.getElementById("collections");
+    const filesEl = document.getElementById("files");
+    const reader = document.getElementById("reader");
+    const q = document.getElementById("q");
+    let selected = "";
+
+    async function api(path) {
+      const res = await fetch(path);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function card(col) {
+      const flags = [
+        col.empty ? '<span class="empty">empty</span>' : "",
+        col.workbench ? '<span class="wb">workbench</span>' : "",
+      ].filter(Boolean).join(" · ");
+      return `<button class="card" data-name="${col.name}">
+        <div class="name">${col.name}</div>
+        <div class="meta">${col.files} files · ${col.updated || "unknown"}${flags ? " · " + flags : ""}</div>
+      </button>`;
+    }
+
+    function fileRow(file) {
+      return `<button class="file" data-id="${file.uri}">
+        <div>${file.path || file.uri}</div>
+        <div class="meta">${file.size} · ${file.updated}</div>
+      </button>`;
+    }
+
+    async function loadCollections() {
+      const { collections } = await api("/api/collections");
+      collectionsEl.innerHTML = collections.map(card).join("") || '<p class="err">No collections.</p>';
+    }
+
+    async function loadFiles(name) {
+      selected = name;
+      for (const el of collectionsEl.querySelectorAll(".card")) el.classList.toggle("active", el.dataset.name === name);
+      const { files } = await api("/api/files?collection=" + encodeURIComponent(name));
+      filesEl.innerHTML = files.map(fileRow).join("") || '<p class="meta" style="padding:0.8rem">No files in this collection.</p>';
+      reader.innerHTML = `<h2>${name}</h2><p class="meta">${files.length} indexed files. Open one to read. Empty collections can be removed with <code>qmd collection remove ${name}</code>.</p>`;
+    }
+
+    async function loadDoc(id) {
+      for (const el of filesEl.querySelectorAll(".file")) el.classList.toggle("active", el.dataset.id === id);
+      const { text } = await api("/api/doc?id=" + encodeURIComponent(id));
+      reader.innerHTML = `<h2>${id.replace(/^qmd:\/\//, "")}</h2><pre></pre>`;
+      reader.querySelector("pre").textContent = text;
+    }
+
+    collectionsEl.addEventListener("click", (event) => {
+      const btn = event.target.closest(".card");
+      if (btn) loadFiles(btn.dataset.name).catch((err) => reader.innerHTML = `<p class="err">${err.message}</p>`);
+    });
+    filesEl.addEventListener("click", (event) => {
+      const btn = event.target.closest(".file");
+      if (btn) loadDoc(btn.dataset.id).catch((err) => reader.innerHTML = `<p class="err">${err.message}</p>`);
+    });
+    document.getElementById("search-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = q.value.trim();
+      if (!query) return;
+      reader.innerHTML = "<p class='meta'>Searching…</p>";
+      try {
+        const path = "/api/search?q=" + encodeURIComponent(query) + (selected ? "&collection=" + encodeURIComponent(selected) : "");
+        const { text } = await api(path);
+        reader.innerHTML = `<h2>Search</h2><pre></pre>`;
+        reader.querySelector("pre").textContent = text || "(no hits)";
+      } catch (err) {
+        reader.innerHTML = `<p class="err">${err.message}</p>`;
+      }
+    });
+    loadCollections().catch((err) => collectionsEl.innerHTML = `<p class="err">${err.message}</p>`);
+  </script>
+</body>
+</html>

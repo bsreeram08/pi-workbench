@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Exec, ProjectPaths, QmdResult, CouncilSession } from "./types.ts";
@@ -24,6 +25,38 @@ function projectId(root: string): string {
   return createHash("sha1").update(root).digest("hex").slice(0, 10);
 }
 
+function gitStdout(root: string, args: string[]): string {
+  try {
+    const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", timeout: 10_000 });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  } catch {
+    // Non-git directories keep the checkout path as identity.
+  }
+  return "";
+}
+
+/** Primary checkout for this Git repo. Linked worktrees share the main toplevel. */
+export function canonicalProjectRoot(root: string): string {
+  const resolved = path.resolve(root);
+  const common = gitStdout(resolved, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    || gitStdout(resolved, ["rev-parse", "--git-common-dir"]);
+  if (!common) {
+    try { return fsSync.realpathSync(resolved); } catch { return resolved; }
+  }
+  const gitDir = path.resolve(resolved, common);
+  const primary = path.basename(gitDir) === ".git" ? path.dirname(gitDir) : gitDir;
+  const toplevel = gitStdout(primary, ["rev-parse", "--show-toplevel"]) || primary;
+  try { return fsSync.realpathSync(toplevel); } catch { return path.resolve(toplevel); }
+}
+
+export function qmdCollectionNames(root: string): { stateCollection: string; projectCollection: string } {
+  const id = projectId(canonicalProjectRoot(root));
+  return {
+    stateCollection: `pi-workbench-state-${id}`,
+    projectCollection: `pi-workbench-project-${id}`,
+  };
+}
+
 export function findProjectRootSync(cwd: string): string {
   const resolved = path.resolve(cwd);
   try {
@@ -37,6 +70,26 @@ export function findProjectRootSync(cwd: string): string {
     // A non-git directory is still a valid project for council planning.
   }
   return resolved;
+}
+
+export async function resolveGitCheckoutRoot(candidate: string | undefined, sessionRoot: string): Promise<string> {
+  const session = path.resolve(sessionRoot);
+  if (!candidate?.trim()) return session;
+  const resolved = path.resolve(session, candidate.trim());
+  let stat;
+  try {
+    stat = await fs.lstat(resolved);
+  } catch {
+    throw new Error(`Implementation root does not exist: ${resolved}`);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Implementation root must be a real Git checkout directory, not a symlink or file.");
+  const real = await fs.realpath(resolved);
+  const git = spawnSync("git", ["-C", real, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 10_000 });
+  const toplevel = git.status === 0 ? git.stdout.trim() : "";
+  if (!toplevel || path.resolve(toplevel) !== real) {
+    throw new Error("Implementation root must be the toplevel of a Git checkout. Pass that repo's path as root; do not start a second Pi.");
+  }
+  return real;
 }
 
 export async function findProjectRoot(cwd: string, exec: Exec): Promise<string> {
@@ -206,6 +259,7 @@ export async function appendDecision(paths: ProjectPaths, entry: string): Promis
 interface QmdConfig {
   stateCollection: string;
   projectCollection: string;
+  extraCollections?: string[];
 }
 
 export async function readQmdConfig(paths: ProjectPaths): Promise<QmdConfig | undefined> {
@@ -217,34 +271,53 @@ export async function readQmdConfig(paths: ProjectPaths): Promise<QmdConfig | un
 }
 
 export async function ensureQmdCollections(paths: ProjectPaths, exec: Exec): Promise<QmdConfig | undefined> {
+  const knowledgeRoot = canonicalProjectRoot(paths.root);
+  const names = qmdCollectionNames(knowledgeRoot);
+  const knowledgePaths = getProjectPaths(knowledgeRoot);
   const existing = await readQmdConfig(paths);
-  if (existing) return existing;
-
-  const id = projectId(paths.root);
+  const extra = new Set(existing?.extraCollections ?? []);
+  if (existing && (existing.stateCollection !== names.stateCollection || existing.projectCollection !== names.projectCollection)) {
+    extra.add(existing.stateCollection);
+    extra.add(existing.projectCollection);
+  }
   const config: QmdConfig = {
-    stateCollection: `pi-workbench-state-${id}`,
-    projectCollection: `pi-workbench-project-${id}`,
+    ...names,
+    ...(extra.size > 0 ? { extraCollections: [...extra].sort() } : {}),
   };
+  if (
+    existing
+    && existing.stateCollection === config.stateCollection
+    && existing.projectCollection === config.projectCollection
+    && JSON.stringify(existing.extraCollections ?? []) === JSON.stringify(config.extraCollections ?? [])
+  ) {
+    return existing;
+  }
 
   try {
-    const state = await exec("qmd", ["collection", "add", paths.stateDir, "--name", config.stateCollection], {
+    const state = await exec("qmd", ["collection", "add", knowledgePaths.stateDir, "--name", config.stateCollection], {
       timeout: 30_000,
     });
     if (state.code !== 0 && !/already exists|already registered/i.test(`${state.stdout}\n${state.stderr}`)) {
-      return undefined;
+      return existing;
     }
 
-    const project = await exec("qmd", ["collection", "add", paths.root, "--name", config.projectCollection], {
+    const project = await exec("qmd", ["collection", "add", knowledgeRoot, "--name", config.projectCollection], {
       timeout: 60_000,
     });
     if (project.code !== 0 && !/already exists|already registered/i.test(`${project.stdout}\n${project.stderr}`)) {
-      return undefined;
+      return existing;
     }
 
     await writeText(paths.qmd, JSON.stringify(config, null, 2));
+    if (knowledgeRoot !== path.resolve(paths.root)) {
+      await writeText(knowledgePaths.qmd, JSON.stringify({
+        stateCollection: config.stateCollection,
+        projectCollection: config.projectCollection,
+      }, null, 2)).catch(() => undefined);
+    }
     return config;
   } catch {
-    return undefined;
+    return existing;
   }
 }
 
@@ -256,8 +329,13 @@ export async function refreshQmd(exec: Exec): Promise<void> {
   }
 }
 
-export function allowedQmdCollections(config: { stateCollection: string; projectCollection: string } | undefined): string[] {
-  return config ? [config.stateCollection, config.projectCollection] : [];
+export function allowedQmdCollections(config: {
+  stateCollection: string;
+  projectCollection: string;
+  extraCollections?: string[];
+} | undefined): string[] {
+  if (!config) return [];
+  return [...new Set([config.stateCollection, config.projectCollection, ...(config.extraCollections ?? [])])];
 }
 
 export function resolveQmdCollections(

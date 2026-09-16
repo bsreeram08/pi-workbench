@@ -285,7 +285,7 @@ Rules:
 5. Run the canonical relevant tests, lint, type checks, or builds documented by the project.
 6. Diagnose failures and continue until the relevant checks pass or a concrete blocker remains.
 7. Do not commit.
-8. If isolation is needed, use ./.worktrees/<name> inside this project and gitignore .worktrees/. Do not write outside the project or ask the user to start another Pi.
+8. If isolation is needed, use ./.worktrees/<name> inside this project and gitignore .worktrees/. If this assignment names another Git checkout, work only in that toplevel as launched; do not ask the user to start another Pi.
 
 Return:
 ## Changes

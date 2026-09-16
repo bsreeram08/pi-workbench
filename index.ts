@@ -62,6 +62,7 @@ import { registerWorkbenchGoal } from "./workbench-goal.ts";
 import { registerVerificationTool } from "./verification-tool.ts";
 import { checkPassed } from "./verification.ts";
 import { registerUsageCommand } from "./usage.ts";
+import { registerQmdViewer } from "./qmd-viewer.ts";
 import { registerModelRouting } from "./model-routing.ts";
 import { registerAutomode } from "./automode.ts";
 import { registerWorkbenchUpdate } from "./workbench-update.ts";
@@ -294,6 +295,7 @@ export default function piWorkbench(pi: ExtensionAPI) {
   });
   registerSkillEvolution(pi);
   registerUsageCommand(pi, (title, body) => report(pi, title, body));
+  registerQmdViewer(pi, exec);
   registerWorkbenchUpdate(pi, { root: EXTENSION_DIR, exec });
 
   pi.registerEntryRenderer(REPORT_ENTRY, (entry, { expanded }, theme) => {

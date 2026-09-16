@@ -137,6 +137,8 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/start-work` | Implement, independently review, repair, and verify the approved plan |
 | `/start-work --pipeline` | Run automatic implementation, review, and repair stages |
 | `/review [focus]` | Independent code review of the current tree; no plan or ticket required |
+| `/review --root <git-toplevel> [focus]` | Same review in another checkout without starting a second Pi |
+| `/qmd` | Open a localhost QMD catalog (collections, files, search, preview) |
 | `/autopilot [task]` | Plan, implement, review, and verify in one run |
 | `/automode [on\|off\|status]` | Keep this Coordinator session moving with conservative defaults |
 | `/workflow-status` | Current plan state and evidence paths |
