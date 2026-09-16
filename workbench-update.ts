@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { acquireUpdateExclusiveLease, type ExclusiveLease } from "./exclusive-lease.ts";
+import { acquireUpdateExclusiveLease, ExclusiveLeaseError, type ExclusiveLease } from "./exclusive-lease.ts";
 import type { Exec, ExecResult } from "./types.ts";
 
 const TRUSTED_REPOSITORY = "https://github.com/bsreeram08/pi-workbench.git";
@@ -74,6 +74,7 @@ export type UpdateCode =
   | "AHEAD"
   | "DIVERGED"
   | "INSTALL_UNSUPPORTED"
+  | "NOT_ON_MAIN"
   | "ORIGIN_UNTRUSTED"
   | "CHECKOUT_DIRTY"
   | "SUBMODULE_DIRTY"
@@ -85,6 +86,7 @@ export type UpdateCode =
   | "CANDIDATE_INVALID"
   | "CANDIDATE_CHANGED"
   | "LOCK_BLOCKED"
+  | "WRITERS_ACTIVE"
   | "CONFIRMATION_REQUIRED"
   | "CANCELLED"
   | "BACKUP_FAILED"
@@ -240,6 +242,13 @@ function isMissing(error: unknown): boolean {
 
 function blocked(code: UpdateCode, partial: Partial<StatusInternal> = {}): StatusInternal {
   return { category: "blocked", code, ...partial };
+}
+
+function lockBlock(error: unknown): Pick<WorkbenchUpdateStatus, "category" | "code"> {
+  if (error instanceof ExclusiveLeaseError && error.code === "active_writers") {
+    return { category: "blocked", code: "WRITERS_ACTIVE" };
+  }
+  return { category: "blocked", code: "LOCK_BLOCKED" };
 }
 
 function publicStatus(status: StatusInternal): WorkbenchUpdateStatus {
@@ -926,7 +935,7 @@ export class WorkbenchUpdater {
     const topLevel = trimOneLine((await this.git(["rev-parse", "--show-toplevel"])).stdout);
     if (!topLevel || await fs.realpath(topLevel) !== this.root) throw new UpdateFailure("INSTALL_UNSUPPORTED");
     const branch = trimOneLine((await this.git(["symbolic-ref", "--quiet", "HEAD"], [0, 1])).stdout);
-    if (branch !== "refs/heads/main") throw new UpdateFailure("INSTALL_UNSUPPORTED");
+    if (branch !== "refs/heads/main") throw new UpdateFailure("NOT_ON_MAIN");
 
     const remotes = (await this.git(["remote"])).stdout.replace(/\r/g, "").split("\n").filter(Boolean);
     if (remotes.length !== 1 || remotes[0] !== "origin") throw new UpdateFailure("ORIGIN_UNTRUSTED");
@@ -1085,8 +1094,8 @@ export class WorkbenchUpdater {
     let lease: ExclusiveLease;
     try {
       lease = await this.acquireUpdateLease(lockPath);
-    } catch {
-      return { category: "blocked", code: "LOCK_BLOCKED" };
+    } catch (error) {
+      return lockBlock(error);
     }
     try {
       return publicStatus(await this.computeStatus());
@@ -1621,8 +1630,8 @@ export class WorkbenchUpdater {
     let lease: ExclusiveLease;
     try {
       lease = await this.acquireUpdateLease(lockPath);
-    } catch {
-      return { category: "blocked", code: "LOCK_BLOCKED", reload: false };
+    } catch (error) {
+      return { ...lockBlock(error), reload: false };
     }
     try {
       const initial = await this.computeStatus();
@@ -1745,6 +1754,18 @@ export function formatUpdateStatus(status: WorkbenchUpdateStatus): string {
   if ("backupId" in status && typeof status.backupId === "string") lines.push(`Backup: ${status.backupId}`);
   if (status.code === "PROFILE_REQUIRED") {
     lines.push("Action: rerun ./install.sh or ./install.sh --full once for the desired profile, then retry.");
+  }
+  if (status.code === "NOT_ON_MAIN") {
+    lines.push("Action: in the Workbench clone, checkout main and pull, then retry. The updater only runs from a clean main checkout, not a feature branch or detached HEAD.");
+  }
+  if (status.code === "WRITERS_ACTIVE") {
+    lines.push("Action: a project writer marker exists under update/pi-workbench/writers in the Pi agent directory. Inspect the recorded PID and process-start identity. If that process is gone, move the marker and the matching project .pi/pi-workbench/writer.lock aside. There is no force-unlock.");
+  }
+  if (status.code === "LOCK_BLOCKED") {
+    lines.push("Action: the update coordination lock is held or unreadable. Inspect update.lock; do not delete it blindly. There is no force-unlock.");
+  }
+  if (status.code === "INSTALL_UNSUPPORTED") {
+    lines.push("Action: the updater requires a recursive Git clone of Workbench on main with installer-managed links. Linked worktrees, missing links, and unsafe Git metadata stay blocked.");
   }
   if (status.code === "ROLLBACK_INCOMPLETE") {
     lines.push("Action: inspect the preserved update backup before another attempt.");

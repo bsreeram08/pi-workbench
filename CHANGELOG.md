@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.1 — 2026-09-16
+
+- `/workbench-update` names the actual block instead of a silent unknown install: leftover project writers (`WRITERS_ACTIVE`), a held update lock (`LOCK_BLOCKED`), and a checkout that is not `main` (`NOT_ON_MAIN`). It still does not take over markers.
+
 ## 0.8.0 — 2026-09-16
 
 - Added first-party instincts (`workbench_instincts`, `/instincts`): atomic learned behaviors with confidence, stored outside the project. Injected as fallible hints, never instructions. Duplicate retain reinforces; contradict lowers confidence. Instincts do not promote themselves into skills or memory.

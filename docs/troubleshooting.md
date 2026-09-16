@@ -14,6 +14,22 @@ If an update is running, let it finish before retrying. Workbench deliberately d
 
 An operator investigating a leftover marker must inspect its recorded hostname, PID, process-start identity, and update recovery state. A live owner or ambiguous identity must be resolved before recovery. Confirmed stale-marker recovery should preserve the marker and recovery artifacts, use the same coordination gate, and revalidate the exact marker before moving it aside. There is no automatic force-unlock command; avoid deleting lock files blindly. See the [coordination implementation](../exclusive-lease.ts) and [updater trust model](../SECURITY.md).
 
+## `/workbench-update` reports `WRITERS_ACTIVE`
+
+```text
+Result: blocked (WRITERS_ACTIVE)
+```
+
+A project writer marker exists under `update/pi-workbench/writers` in the Pi agent directory. That blocks status and apply, so current/candidate stay unknown until the marker is resolved. Inspect the recorded PID and process-start identity. If the process is gone, move the marker and the matching project `.pi/pi-workbench/writer.lock` aside. Do not delete them blindly.
+
+## `/workbench-update` reports `NOT_ON_MAIN`
+
+```text
+Result: blocked (NOT_ON_MAIN)
+```
+
+The updater only runs from a clean `main` checkout of the Workbench clone. Feature branches and detached HEAD stay blocked. In that clone: `git checkout main && git pull`, then retry. `/reload` after the checkout if you already have the desired revision.
+
 ## Planning stops on a valid design skill
 
 Older loaders reported this for optional skills larger than 24,000 bytes:

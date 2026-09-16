@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { acquireExclusiveLease, ExclusiveLeaseError, type ExclusiveLease } from "../exclusive-lease.ts";
 import type { Exec, ExecResult } from "../types.ts";
 import {
+  formatUpdateStatus,
   registerWorkbenchUpdate,
   WorkbenchUpdater,
   type UpdateProfile,
@@ -477,9 +478,9 @@ describe("Pi Workbench updater status trust and channel policy", () => {
 
     const detached = await createFixture();
     git(detached.root, "checkout", "--detach");
-    expect(await detached.updater(fakeReleases([])).status()).toMatchObject({ code: "INSTALL_UNSUPPORTED" });
+    expect(await detached.updater(fakeReleases([])).status()).toMatchObject({ code: "NOT_ON_MAIN" });
     git(detached.root, "switch", "-c", "other");
-    expect(await detached.updater(fakeReleases([])).status()).toMatchObject({ code: "INSTALL_UNSUPPORTED" });
+    expect(await detached.updater(fakeReleases([])).status()).toMatchObject({ code: "NOT_ON_MAIN" });
 
     const linked = await createFixture();
     const linkedRoot = path.join(path.dirname(linked.root), "linked");
@@ -925,7 +926,7 @@ describe("Pi Workbench updater apply transaction", () => {
         exec: fixture.exec,
         fetch: fakeReleases([release("v1.1.0")]),
       });
-      expect(await apply(updater)).toEqual({ category: "blocked", code: "LOCK_BLOCKED", reload: false });
+      expect(await apply(updater)).toEqual({ category: "blocked", code: "WRITERS_ACTIVE", reload: false });
       expect(fixture.calls).toEqual([]);
       expect(git(fixture.root, "rev-parse", "HEAD")).toBe(fixture.initial);
     } finally {
@@ -1293,6 +1294,13 @@ describe("Pi Workbench updater apply transaction", () => {
 });
 
 describe("/workbench-update command UX", () => {
+  test("blocked status names the gate and the next action instead of a silent unknown install", () => {
+    expect(formatUpdateStatus({ category: "blocked", code: "NOT_ON_MAIN" })).toContain("checkout main and pull");
+    expect(formatUpdateStatus({ category: "blocked", code: "WRITERS_ACTIVE" })).toContain("writer marker exists");
+    expect(formatUpdateStatus({ category: "blocked", code: "LOCK_BLOCKED" })).toContain("update coordination lock");
+    expect(formatUpdateStatus({ category: "blocked", code: "INSTALL_UNSUPPORTED" })).toContain("installer-managed links");
+  });
+
   test("treats empty/status as status and rejects unknown actions or extra refs", async () => {
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
     let statusCalls = 0;
