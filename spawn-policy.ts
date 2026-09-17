@@ -76,6 +76,7 @@ The user required specialists for this work. Do not keep orientation, research, 
 On get-up-to-speed, audit, compare, or inspect-the-repo tasks:
 - spawn up to ${policy.fanout} read-only specialists in one parallel delegate_task
 - keep synthesis, decisions, and the user-facing summary in Main Pi
+- pass an earlier specialist result with fromRuns and its host-issued runId; do not restate the dump
 - do not spawn writers unless the user asked to implement
 
 A single cheap file edit still stays here.`;

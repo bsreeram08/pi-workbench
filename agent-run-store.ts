@@ -6,6 +6,8 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export const AGENT_RUN_RECORD_VERSION = 1 as const;
 export const MAX_AGENT_RUN_RECORD_BYTES = 128 * 1024;
+export const MAX_AGENT_RUN_OUTPUT_BYTES = 64 * 1024;
+export const AGENT_RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
 export type AgentRunStatus =
   | "queued"
@@ -72,6 +74,7 @@ export interface AgentRunPaths {
   readonly root: string;
   readonly record: string;
   readonly systemPrompt: string;
+  readonly finalText: string;
   readonly sessions: string;
   readonly temporaryHome: string;
   readonly temporaryDirectory: string;
@@ -89,7 +92,11 @@ const STATUSES = new Set<AgentRunStatus>([
   "queued", "starting", "running", "steering", "waiting_for_parent", "cancelling", "terminating",
   "completed", "failed", "cancelled", "interrupted", "orphaned",
 ]);
-const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const RUN_ID_PATTERN = AGENT_RUN_ID_PATTERN;
+
+export function isAgentRunId(value: string): boolean {
+  return RUN_ID_PATTERN.test(value);
+}
 const writes = new Map<string, Promise<void>>();
 
 function stableValue(value: unknown): unknown {
@@ -231,6 +238,7 @@ export class AgentRunStore {
       root,
       record: path.join(root, "record.json"),
       systemPrompt: path.join(root, "system-prompt.md"),
+      finalText: path.join(root, "final-text.md"),
       sessions: path.join(root, "sessions"),
       temporaryHome: path.join(root, "home"),
       temporaryDirectory: path.join(root, "tmp"),
@@ -250,6 +258,30 @@ export class AgentRunStore {
 
   async writeSystemPrompt(paths: AgentRunPaths, content: string): Promise<void> {
     await atomicWrite(paths.systemPrompt, content);
+  }
+
+  async writeFinalText(paths: AgentRunPaths, content: string): Promise<void> {
+    if (Buffer.byteLength(content, "utf8") > MAX_AGENT_RUN_OUTPUT_BYTES) {
+      throw new Error("Agent-run output exceeds its size limit.");
+    }
+    await atomicWrite(paths.finalText, content);
+  }
+
+  async loadFinalText(paths: AgentRunPaths, expectedDigest?: string): Promise<string> {
+    let stat;
+    try { stat = await fs.lstat(paths.finalText); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Stored specialist output is missing.");
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_AGENT_RUN_OUTPUT_BYTES) {
+      throw new Error("Stored specialist output is unsafe or oversized.");
+    }
+    if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) throw new Error("Stored specialist output permissions are not private.");
+    const text = await fs.readFile(paths.finalText, "utf8");
+    if (expectedDigest && digestAgentRunText(text) !== expectedDigest) {
+      throw new Error("Stored specialist output failed digest check.");
+    }
+    return text;
   }
 
   async save(paths: AgentRunPaths, record: Omit<AgentRunRecord, "checksum"> | AgentRunRecord): Promise<AgentRunRecord> {

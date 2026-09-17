@@ -26,7 +26,13 @@ interface Harness {
 
 async function harness(
   runAgent: (agent: AgentSpec, call: number, task: string) => Promise<AgentResult>,
-  options: { abortOnBegin?: boolean; blockLease?: boolean; beforeLeaseWork?: (root: string) => Promise<void>; coordinator?: boolean } = {},
+  options: {
+    abortOnBegin?: boolean;
+    blockLease?: boolean;
+    beforeLeaseWork?: (root: string) => Promise<void>;
+    coordinator?: boolean;
+    loadPriorRuns?: (projectRoot: string, runIds: string[]) => Promise<Array<{ runId: string; title: string; agentId: string; digest: string; text: string }>>;
+  } = {},
 ): Promise<Harness> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "workflow-orchestration-"));
   await fs.mkdir(path.join(root, ".pi", "pi-workbench"), { recursive: true });
@@ -67,6 +73,7 @@ async function harness(
     report(title, body) { reports.push({ title, body }); },
     getRoutingState: () => ({ policy: "balanced" }),
     runAgent: async (_projectRoot, agent, _systemPrompt, task) => runAgent(agent, ++calls, task),
+    loadPriorRuns: options.loadPriorRuns,
     withLease: async (_projectRoot: string, operation: string, work: () => Promise<unknown>) => {
       leaseOperations.push(operation);
       if (options.blockLease) throw new ExclusiveLeaseError("writer_live", "live");
@@ -1103,6 +1110,45 @@ describe("writer lease entrypoint coverage", () => {
       expect((await loadCurrentWorkflowPlan(getWorkflowPaths(path.join(testHarness.root, ".pi", "pi-workbench"))))?.status).toBe("approved");
     } finally {
       await fs.rm(testHarness.root, { recursive: true, force: true });
+    }
+  });
+
+  test("delegate_task injects stored prior runs and rejects unknown ids", async () => {
+    const tasks: string[] = [];
+    const item = await harness(async (agent, _call, task) => {
+      tasks.push(task);
+      return { ...agentResult(agent), runId: "child-1" };
+    }, {
+      async loadPriorRuns(_projectRoot, runIds) {
+        if (runIds.includes("missing-run")) throw new Error("Unknown specialist run: missing-run.");
+        return runIds.map((runId) => ({
+          runId, title: "Codebase Explorer", agentId: "codebase-explorer", digest: "a".repeat(64), text: `prior from ${runId}`,
+        }));
+      },
+    });
+    try {
+      const ctx = context(item.root);
+      const tool = item.tools.get("delegate_task");
+      const result = await tool.execute("single", {
+        agent: "technical-reviewer",
+        task: "Review auth",
+        fromRuns: ["explorer-1"],
+      }, undefined, undefined, ctx);
+      expect(tasks[0]).toContain('runId="explorer-1"');
+      expect(tasks[0]).toContain("prior from explorer-1");
+      expect(tasks[0]).toContain("Review auth");
+      expect(result.content[0]?.text).toContain("runId: `child-1`");
+      await expect(tool.execute("missing", {
+        agent: "technical-reviewer",
+        task: "Review auth",
+        fromRuns: ["missing-run"],
+      }, undefined, undefined, ctx)).rejects.toThrow("Unknown specialist run");
+      await expect(tool.execute("parallel-top", {
+        tasks: [{ agent: "technical-reviewer", task: "Review auth" }],
+        fromRuns: ["explorer-1"],
+      }, undefined, undefined, ctx)).rejects.toThrow("set fromRuns on each tasks[] entry");
+    } finally {
+      await fs.rm(item.root, { recursive: true, force: true });
     }
   });
 

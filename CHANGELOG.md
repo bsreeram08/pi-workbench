@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Specialist handoff is host-owned: later Main Pi turns keep a run-id pointer instead of the full dump, `fromRuns` injects stored prior results into a later child, unknown run ids fail closed, and parent-facing failures are curated. Stored final text remains on the run. Reload a dump with `workbench_agent_status` `output=true`.
 - `/spawn` is a user-owned specialist policy: durable `always|ask|never|auto`, `fanout 1-6`, and `/spawn this …` for the current session. `never` blocks `delegate_task` and `workbench_agent_start`; explicit `/delegate`, `/plan`, and `/start-work` still run. Default remains `auto`.
 
 ## 0.8.1 — 2026-09-16

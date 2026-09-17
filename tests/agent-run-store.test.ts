@@ -73,6 +73,22 @@ describe("AgentRunStore", () => {
     }
   });
 
+  test("writes private final text and fails closed on digest mismatch", async () => {
+    const item = await fixture();
+    try {
+      const paths = await item.store.prepare(item.project, "run-one");
+      await item.store.writeFinalText(paths, "stored specialist output");
+      const digest = digestAgentRunText("stored specialist output");
+      await expect(item.store.loadFinalText(paths, digest)).resolves.toBe("stored specialist output");
+      if (process.platform !== "win32") {
+        expect((await fs.stat(paths.finalText)).mode & 0o077).toBe(0);
+      }
+      await expect(item.store.loadFinalText(paths, "a".repeat(64))).rejects.toThrow("digest check");
+    } finally {
+      await fs.rm(item.root, { recursive: true, force: true });
+    }
+  });
+
   test("rejects a symlinked record", async () => {
     const item = await fixture();
     try {
