@@ -80,6 +80,6 @@ If review misses a coupled file, check the host impact receipt's `dependents`. I
 
 `/qmd` opens a read-only catalog at http://127.0.0.1:47821/ (loopback only). Use it to judge empty, stale, or duplicate collections. Removing an index is still `qmd collection remove <name>` in a terminal.
 
-Workbench QMD collections are named from the Git primary checkout, not the worktree path. Linked worktrees share `pi-workbench-state-*` / `pi-workbench-project-*` and the project memory store. After reload, a worktree that used path-hashed names still searches those as extras; new indexing goes to the shared pair. User-created collections (`DineManage`, `acquirer-docs`, …) stay separate; children do not search every QMD collection on the machine.
+Workbench QMD searches the shared `pi-workbench-state` and `pi-workbench-project` collections (a merged snapshot under `~/.pi/agent/workbench/qmd-union/`). Linked worktrees share that pair and the project memory store. User-created collections (`DineManage`, `acquirer-docs`, …) stay separate. Empty `flows` / `reference-docs` are unrelated to Workbench.
 
 If a writer continuation is unavailable after reload or a source change, inspect the partial/current work and assign a fresh bounded correction. Do not resend the original broad assignment automatically.

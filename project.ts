@@ -21,10 +21,6 @@ export class CouncilAuthoritySnapshotMismatchError extends Error {
   }
 }
 
-function projectId(root: string): string {
-  return createHash("sha1").update(root).digest("hex").slice(0, 10);
-}
-
 function gitStdout(root: string, args: string[]): string {
   try {
     const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", timeout: 10_000 });
@@ -49,11 +45,13 @@ export function canonicalProjectRoot(root: string): string {
   try { return fsSync.realpathSync(toplevel); } catch { return path.resolve(toplevel); }
 }
 
-export function qmdCollectionNames(root: string): { stateCollection: string; projectCollection: string } {
-  const id = projectId(canonicalProjectRoot(root));
+export const SHARED_QMD_STATE_COLLECTION = "pi-workbench-state";
+export const SHARED_QMD_PROJECT_COLLECTION = "pi-workbench-project";
+
+export function qmdCollectionNames(_root?: string): { stateCollection: string; projectCollection: string } {
   return {
-    stateCollection: `pi-workbench-state-${id}`,
-    projectCollection: `pi-workbench-project-${id}`,
+    stateCollection: SHARED_QMD_STATE_COLLECTION,
+    projectCollection: SHARED_QMD_PROJECT_COLLECTION,
   };
 }
 
@@ -293,7 +291,20 @@ export async function ensureQmdCollections(paths: ProjectPaths, exec: Exec): Pro
     return existing;
   }
 
+  const alreadyShared = async (name: string): Promise<boolean> => {
+    try {
+      const shown = await exec("qmd", ["collection", "show", name], { timeout: 15_000 });
+      return shown.code === 0;
+    } catch {
+      return false;
+    }
+  };
+
   try {
+    if (await alreadyShared(config.stateCollection) && await alreadyShared(config.projectCollection)) {
+      await writeText(paths.qmd, JSON.stringify(config, null, 2));
+      return config;
+    }
     const state = await exec("qmd", ["collection", "add", knowledgePaths.stateDir, "--name", config.stateCollection], {
       timeout: 30_000,
     });
@@ -334,8 +345,9 @@ export function allowedQmdCollections(config: {
   projectCollection: string;
   extraCollections?: string[];
 } | undefined): string[] {
-  if (!config) return [];
-  return [...new Set([config.stateCollection, config.projectCollection, ...(config.extraCollections ?? [])])];
+  const shared = [SHARED_QMD_STATE_COLLECTION, SHARED_QMD_PROJECT_COLLECTION];
+  if (!config) return shared;
+  return [...new Set([config.stateCollection, config.projectCollection, ...(config.extraCollections ?? []), ...shared])];
 }
 
 export function resolveQmdCollections(
