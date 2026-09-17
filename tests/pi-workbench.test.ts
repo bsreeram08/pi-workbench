@@ -295,6 +295,10 @@ describe("Pi workflow routing", () => {
       const added = spawnSync("git", ["-C", main, "worktree", "add", worktree, "HEAD"], { encoding: "utf8" });
       expect(added.status, added.stderr).toBe(0);
       expect(canonicalProjectRoot(worktree)).toBe(canonicalProjectRoot(main));
+      expect(qmdCollectionNames(worktree)).toEqual({
+        stateCollection: "pi-workbench-state",
+        projectCollection: "pi-workbench-project",
+      });
       expect(qmdCollectionNames(worktree)).toEqual(qmdCollectionNames(main));
       const { createMemoryRoots } = await import("../memory-store.ts");
       const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-workbench-mem-"));
@@ -318,7 +322,13 @@ describe("Pi workflow routing", () => {
       projectCollection: "pi-workbench-project-abc",
       extraCollections: ["pi-workbench-project-old"],
     });
-    expect(allowed).toEqual(["pi-workbench-state-abc", "pi-workbench-project-abc", "pi-workbench-project-old"]);
+    expect(allowed).toEqual([
+      "pi-workbench-state-abc",
+      "pi-workbench-project-abc",
+      "pi-workbench-project-old",
+      "pi-workbench-state",
+      "pi-workbench-project",
+    ]);
     expect(resolveQmdCollections(undefined, allowed)).toEqual({ ok: true, collections: allowed });
     expect(resolveQmdCollections("pi-workbench-project-abc", allowed)).toEqual({
       ok: true, collections: ["pi-workbench-project-abc"],
