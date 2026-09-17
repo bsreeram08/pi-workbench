@@ -7,6 +7,14 @@ import { findProjectRoot, getProjectPaths } from "./project.ts";
 import { MODEL_ROUTING_RECEIPT_ENTRY } from "./model-routing.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import { authorizeSpawnTool } from "./spawn-policy.ts";
+import {
+  AGENT_RUNTIME_RESULT_TYPE,
+  OBSERVED_RUNS_ENTRY,
+  formatRunReport,
+  observedRunFromResult,
+  parseRunIds,
+  withPriorRuns,
+} from "./child-handoff.ts";
 import { formatRoutingReceipt, routeTask, type ModelRoutingState, type RoutingEffort } from "./routing.ts";
 import { AgentRunManager } from "./agent-run-manager.ts";
 import { getWorkflowAgentProfile, requireAvailableDelegationModel, resolveWorkflowAgent, WORKFLOW_AGENT_IDS, type WorkflowAgentId } from "./workflow-agents.ts";
@@ -53,12 +61,14 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
       "Inside cmux, Workbench agent runs are real interactive Pi TUI sessions controlled through a private authenticated bridge; focus the tab to chat directly. Outside cmux, the first-party headless RPC executor remains available for compatibility.",
       "Persistent starts are read-only, including Bash-capable specialists that need shell verification. Persistent mutation-capable agents remain deferred.",
       "Honor an explicit model request with model=provider/model[:thinking]; no silent fallback. Effort independently controls the work budget.",
+      "Pass prior specialist results with fromRuns using host-issued run ids. Unknown ids fail closed.",
     ],
     parameters: Type.Object({
       agent: AgentSchema,
       task: Type.String({ minLength: 1, maxLength: 100_000, description: "Focused task and observable success criteria" }),
       effort: Type.Optional(EffortSchema),
       model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] override the user requested" })),
+      fromRuns: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 6, description: "Host-issued specialist run ids whose stored final text is injected as labeled data" })),
       allowQuestions: Type.Optional(Type.Boolean({ default: true, description: "Allow at most one child ask_parent question for the run" })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -80,13 +90,17 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
       const route = routeTask({ task: params.task, role: base.id, effort, policy: getRoutingState(), readOnly: true, model: params.model });
       const agent = resolveWorkflowAgent(base.id, config, params.task, effort, getRoutingState(), params.model);
       if (!agent) throw new Error(`Could not resolve Workbench agent: ${params.agent}`);
+      const task = withPriorRuns(
+        params.task,
+        params.fromRuns?.length ? await manager.loadPriorRuns(root, parseRunIds(params.fromRuns)) : [],
+      );
       pi.appendEntry(MODEL_ROUTING_RECEIPT_ENTRY, { content: formatRoutingReceipt(agent.title, route) });
       if (signal?.aborted) throw new Error("Workbench agent start was cancelled before launch.");
       const handle = await manager.start({
         projectRoot: root,
         agent,
         systemPrompt: systemPrompt(base),
-        task: params.task,
+        task,
         runContext: {
           groupId: "interactive-agents",
           groupTitle: "Interactive agents",
@@ -95,12 +109,14 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
         },
       });
       void handle.completion.then((result) => {
+        const observed = observedRunFromResult({ ...result, runId: result.runId ?? handle.runId });
+        if (observed) pi.appendEntry(OBSERVED_RUNS_ENTRY, observed);
         const state = result.exitCode === 0 ? "completed" : result.cancelled ? "cancelled" : "failed";
         pi.sendMessage({
-          customType: "pi-workbench-agent-runtime-result",
-          content: `Workbench agent ${handle.runId} ${state}.\n\n${result.output || result.error || "No output."}`,
+          customType: AGENT_RUNTIME_RESULT_TYPE,
+          content: formatRunReport({ ...result, runId: result.runId ?? handle.runId }),
           display: true,
-          details: { runId: handle.runId, agentId: result.agentId, state, exitCode: result.exitCode },
+          details: { runId: handle.runId, agentId: result.agentId, state, exitCode: result.exitCode, results: [{ ...result, runId: result.runId ?? handle.runId }] },
         }, { deliverAs: "followUp", triggerTurn: true });
       }).catch(() => undefined);
       return {
@@ -128,10 +144,29 @@ export function registerAgentRuntimeTools(pi: ExtensionAPI, options: RegisterAge
   pi.registerTool({
     name: "workbench_agent_status",
     label: "Workbench Agent Status",
-    description: "Return bounded, redacted status for first-party Workbench agent runs in the current project.",
-    parameters: Type.Object({ runId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+    description: "Return bounded, redacted status for first-party Workbench agent runs in the current project. Set output=true with a runId to reload stored final text.",
+    parameters: Type.Object({
+      runId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      output: Type.Optional(Type.Boolean({ description: "Reload stored final text for the given runId" })),
+    }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const root = await findProjectRoot(ctx.cwd, exec);
+      if (params.output) {
+        if (!params.runId) throw new Error("output=true requires runId.");
+        const loaded = await manager.loadStoredOutput(root, params.runId);
+        return {
+          content: [{ type: "text", text: formatRunReport({
+            runId: loaded.record.runId,
+            agentId: loaded.record.agentId,
+            title: loaded.record.title,
+            output: loaded.text,
+            exitCode: loaded.record.exitCode ?? 1,
+            cancelled: loaded.record.status === "cancelled",
+            error: loaded.record.errorCode,
+          }) }],
+          details: { runId: loaded.record.runId, output: true },
+        };
+      }
       const statuses = await manager.status(root, params.runId);
       return { content: [{ type: "text", text: renderStatuses(statuses) }], details: { statuses } };
     },

@@ -300,6 +300,11 @@ describe("AgentRunManager", () => {
       expect(record).toMatchObject({ runtime: "headless-rpc", runtimePath: FIXTURE });
       expect(record?.runtimeDigest).toMatch(/^[0-9a-f]{64}$/);
       expect(record?.outputDigest).toMatch(/^[0-9a-f]{64}$/);
+      const paths = await item.manager.store.paths(item.project, handle.runId);
+      await expect(item.manager.store.loadFinalText(paths, record!.outputDigest)).resolves.toBe("verified fake output");
+      const prior = await item.manager.loadPriorRuns(item.project, [handle.runId]);
+      expect(prior).toEqual([expect.objectContaining({ runId: handle.runId, text: "verified fake output" })]);
+      await expect(item.manager.loadPriorRuns(item.project, ["missing-run"])).rejects.toThrow("Unknown specialist run");
     } finally {
       await item.manager.shutdown();
       await fs.rm(item.root, { recursive: true, force: true });
@@ -634,7 +639,7 @@ describe("buildAgentChildEnvironment", () => {
   test("omits parent credentials and loader hooks", () => {
     const environment = buildAgentChildEnvironment(
       { PATH: "/usr/bin", NODE_OPTIONS: "evil", OPENAI_API_KEY: "secret", PI_CODING_AGENT_DIR: "/safe/agent" },
-      { root: "/run", record: "/run/record", systemPrompt: "/run/prompt", sessions: "/run/sessions", temporaryHome: "/run/home", temporaryDirectory: "/run/tmp" },
+      { root: "/run", record: "/run/record", systemPrompt: "/run/prompt", finalText: "/run/final-text.md", sessions: "/run/sessions", temporaryHome: "/run/home", temporaryDirectory: "/run/tmp" },
       { runId: "run", agentId: "agent", projectRoot: "/worktree", memoryProjectRoot: "/project", allowParentQuestions: false, readOnly: true },
     );
     expect(environment).toMatchObject({

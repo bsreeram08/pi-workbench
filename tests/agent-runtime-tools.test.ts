@@ -109,6 +109,50 @@ describe("first-party agent runtime tool surface", () => {
     expect(started).toBeUndefined();
   });
 
+  test("injects fromRuns into persistent starts and reloads stored output", async () => {
+    const tools: any[] = [];
+    let started: any;
+    registerAgentRuntimeTools({
+      registerTool(tool: unknown) { tools.push(tool); },
+      appendEntry() {},
+    } as any, {
+      manager: {
+        async start(request: unknown) {
+          started = request;
+          return { runId: "agent-codebase-explorer-1", completion: new Promise(() => {}) };
+        },
+        async loadPriorRuns(_root: string, runIds: string[]) {
+          return runIds.map((runId) => ({
+            runId, title: "Codebase Explorer", agentId: "codebase-explorer", digest: "a".repeat(64), text: `prior ${runId}`,
+          }));
+        },
+        async loadStoredOutput(_root: string, runId: string) {
+          return {
+            record: { runId, agentId: "codebase-explorer", title: "Codebase Explorer", exitCode: 0, status: "completed", outputDigest: "a".repeat(64) },
+            text: "stored explorer dump",
+          };
+        },
+        async status() { return []; },
+      } as any,
+      exec: async () => ({ stdout: "/project", stderr: "", code: 0 }),
+      getRoutingState: () => ({ policy: "balanced" }),
+    });
+    const start = tools.find((tool) => tool.name === "workbench_agent_start");
+    await start.execute("call", { agent: "codebase-explorer", task: "Inspect auth", fromRuns: ["explorer-1"] }, undefined, undefined, {
+      cwd: "/project", hasUI: true, isProjectTrusted: () => true, ui: { notify() {} },
+    });
+    expect(started.task).toContain("prior explorer-1");
+    expect(started.task).toContain("Inspect auth");
+    const status = tools.find((tool) => tool.name === "workbench_agent_status");
+    const loaded = await status.execute("out", { runId: "explorer-1", output: true }, undefined, undefined, {
+      cwd: "/project", hasUI: true, isProjectTrusted: () => true, ui: { notify() {} },
+    });
+    expect(loaded.content[0]?.text).toContain("stored explorer dump");
+    await expect(status.execute("bad", { output: true }, undefined, undefined, {
+      cwd: "/project", hasUI: true, isProjectTrusted: () => true, ui: { notify() {} },
+    })).rejects.toThrow("output=true requires runId");
+  });
+
   test("keeps the legacy launcher seam as a facade over the shared manager", async () => {
     const original = getDefaultAgentRunManager();
     let request: any;

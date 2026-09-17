@@ -1,3 +1,4 @@
+import { formatAgentHandoffResults } from "./child-handoff.ts";
 import type { AgentResult, AgentSpec } from "./types.ts";
 import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { INTENT_DISCIPLINE } from "./prompt-discipline.ts";
@@ -26,12 +27,7 @@ Do not defer all useful thinking to another agent. State your own position, what
 }
 
 export function formatAgentResults(results: AgentResult[]): string {
-  return results
-    .map((result) => {
-      const status = result.exitCode === 0 ? "completed" : `failed (${result.error ?? "unknown error"})`;
-      return `## ${result.title} — ${status}\n\n${result.output}`;
-    })
-    .join("\n\n---\n\n");
+  return formatAgentHandoffResults(results);
 }
 
 export function buildRoundTask(

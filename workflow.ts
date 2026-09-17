@@ -83,6 +83,8 @@ import { registerCoordinatorExecution } from "./coordinator-execution.ts";
 import { registerCoordinatorModelPolicy } from "./coordinator-model-policy.ts";
 import { startWorkflowActivity } from "./workflow-activity.ts";
 import { formatAgentResults } from "./prompts.ts";
+import { formatRunReport, parseRunIds, recordObservedRuns, withPriorRuns, type PriorRun } from "./child-handoff.ts";
+import { getDefaultAgentRunManager } from "./agent-run-manager.ts";
 import {
   formatRoutingReceipt,
   readOnlyBudgetGuidance,
@@ -100,6 +102,7 @@ interface WorkflowDependencies {
   getRoutingState(): ModelRoutingState;
   runAgent?: typeof runSingleAgent;
   withLease?: typeof withExclusiveLease;
+  loadPriorRuns?: (projectRoot: string, runIds: string[]) => Promise<PriorRun[]>;
 }
 
 type WorkbenchTaskState = "running" | "blocked" | "needs_attention" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -129,11 +132,18 @@ const RoutingEffortSchema = StringEnum(["auto", "light", "standard", "heavy"] as
   description: "Parent-judged effort. auto uses the conservative deterministic classifier.",
 });
 
+const RunIdListSchema = Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+  minItems: 1,
+  maxItems: 6,
+  description: "Host-issued specialist run ids whose stored final text is injected as labeled data",
+});
+
 const TaskItemSchema = Type.Object({
   agent: StringEnum(WORKFLOW_AGENT_IDS, { description: "Specialized workflow agent" }),
   task: Type.String({ description: "Focused task with expected output and success criteria" }),
   effort: Type.Optional(RoutingEffortSchema),
   model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] for this lane; overrides routing without fallback" })),
+  fromRuns: Type.Optional(RunIdListSchema),
 });
 
 function now(): string {
@@ -241,8 +251,7 @@ async function getTaskInput(rawArgs: string, ctx: ExtensionCommandContext, title
 }
 
 function renderAgentResult(result: AgentResult): string {
-  const status = result.exitCode === 0 ? "completed" : `failed: ${result.error ?? `exit ${result.exitCode}`}`;
-  return `## ${result.title} — ${status}\n\n${result.output}`;
+  return formatRunReport(result);
 }
 
 function reviewRoles(config: WorkbenchConfig): Array<"quality-reviewer" | "technical-reviewer"> {
@@ -257,6 +266,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   const { dashboard, exec, reprompterPath, report, getRoutingState } = dependencies;
   const runAgent = dependencies.runAgent ?? runSingleAgent;
   const withLease = dependencies.withLease ?? withExclusiveLease;
+  const loadPriorRuns = dependencies.loadPriorRuns ?? ((projectRoot: string, runIds: string[]) => getDefaultAgentRunManager().loadPriorRuns(projectRoot, runIds));
   const communityKnowledgePath = getCommunityKnowledgePath();
 
   async function resolveProject(ctx: ExtensionContext): Promise<{
@@ -1107,6 +1117,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       "Main Pi acts as Coordinator: delegate bounded outcomes with context and success criteria, then verify returned claims against the actual project.",
       "Before delegating, classify every lane from complexity, uncertainty, risk, breadth, and verification cost. Role is only a prior: hard scout/recon work may require Sol. Set effort explicitly when you have made that judgment; otherwise use auto.",
       "Honor a requested model with the model parameter (exact provider/model[:thinking] the user asked for). This overrides session routing for that delegation only; effort still controls its work budget. Unavailable models fail without substitution. Do not invent a model they did not request.",
+      "Pass prior specialist results with fromRuns using host-issued run ids. Unknown ids fail closed. Do not paste or paraphrase another child's dump when a run id exists.",
       "Show the pre-launch route receipt. Never use Spark for visual/image work. Never run Implementer or Task Implementer in a parallel delegate_task batch or hard-cap mutation-capable work.",
     ],
     parameters: Type.Object({
@@ -1114,6 +1125,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       task: Type.Optional(Type.String({ description: "Task for single delegation" })),
       effort: Type.Optional(RoutingEffortSchema),
       model: Type.Optional(Type.String({ description: "Exact provider/model[:thinking] the user requested for single delegation" })),
+      fromRuns: Type.Optional(RunIdListSchema),
       tasks: Type.Optional(Type.Array(TaskItemSchema, { minItems: 1, maxItems: 6, description: "Read-only tasks to run in parallel" })),
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<DelegationToolDetails>> {
@@ -1129,6 +1141,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       }
       await authorizeSpawnTool(ctx, hasParallel ? params.tasks!.length : 1);
       if (hasParallel && params.model !== undefined) throw new Error("For parallel delegation, set model on each tasks[] entry.");
+      if (hasParallel && params.fromRuns !== undefined) throw new Error("For parallel delegation, set fromRuns on each tasks[] entry.");
       for (const item of params.tasks ?? [{ model: params.model }]) requireAvailableDelegationModel(ctx, item.model);
       const project = await resolveProject(ctx);
       const ownsRun = !dashboard.state.currentRunId;
@@ -1149,16 +1162,22 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
             content: [{ type: "text", text: "Delegation in progress." }],
             details: { mode: "parallel", results: [], routes },
           });
+          const prepared = [];
+          for (const item of params.tasks) {
+            const prior = item.fromRuns?.length ? await loadPriorRuns(project.root, parseRunIds(item.fromRuns)) : [];
+            prepared.push({ role: item.agent, task: withPriorRuns(item.task, prior), effort: item.effort, model: item.model });
+          }
           const results = await runRoleBatch(
             project.root,
             project.config,
-            params.tasks.map((item) => ({ role: item.agent, task: item.task, effort: item.effort, model: item.model })),
+            prepared,
             params.tasks.map((item) => item.task).join("\n"),
             progress,
             `tool-parallel-${Date.now()}`,
             "Delegation",
             signal,
           );
+          recordObservedRuns(pi, results);
           return {
             content: [{ type: "text", text: formatAgentResults(results) }],
             details: { mode: "parallel", results, routes },
@@ -1167,7 +1186,10 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         const role = params.agent as WorkflowAgentId;
         const profile = resolveWorkflowAgent(role, project.config);
         if (!profile) throw new Error(`Unknown workflow agent: ${String(params.agent)}`);
-        const task = params.task ?? "";
+        const task = withPriorRuns(
+          params.task ?? "",
+          params.fromRuns?.length ? await loadPriorRuns(project.root, parseRunIds(params.fromRuns)) : [],
+        );
         if (!profile.readOnly) {
           if (!ctx.hasUI) throw new Error("Write-capable delegation requires interactive confirmation.");
           const confirmed = await ctx.ui.confirm(`Run ${profile.title}?`, "This specialist can modify the current working tree. It will run alone under the project writer lease.");
@@ -1195,6 +1217,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
           params.model,
         );
         const result = profile.readOnly ? await launch() : await withLease(project.root, "delegate-task", launch);
+        recordObservedRuns(pi, [result]);
         return { content: [{ type: "text", text: renderAgentResult(result) }], details: { mode: "single", results: [result], routes } };
       } finally {
         progress.clear();

@@ -7,7 +7,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { AgentRpcConnection, AgentRpcProtocolError, MAX_AGENT_RPC_STDERR_BYTES, type AgentRpcEvent, type RpcResponse } from "./agent-rpc.ts";
-import { AgentRunStore, digestAgentRunText, type AgentRunPaths, type AgentRunQuestion, type AgentRunRecord, type AgentRunStatus } from "./agent-run-store.ts";
+import { AgentRunStore, digestAgentRunText, isAgentRunId, type AgentRunPaths, type AgentRunQuestion, type AgentRunRecord, type AgentRunStatus } from "./agent-run-store.ts";
+import { MAX_PRIOR_RUNS, parseRunIds, type PriorRun } from "./child-handoff.ts";
 import { CHILD_BRIDGE_EXTENSION_PATH, type AgentSessionHost } from "./agent-cmux-session.ts";
 import { supportsFastModeRoute } from "./child-fast-mode.ts";
 import type { WorkbenchDashboardController } from "./dashboard-controller.ts";
@@ -751,6 +752,33 @@ export class AgentRunManager {
     }));
   }
 
+  async loadStoredOutput(projectRoot: string, runId: string): Promise<{ record: AgentRunRecord; text: string }> {
+    if (!isAgentRunId(runId)) throw new Error("Unknown specialist run id.");
+    const record = this.active.get(runId)?.record ?? this.recent.get(runId) ?? await this.store.load(projectRoot, runId);
+    if (!record) throw new Error(`Unknown specialist run: ${runId}.`);
+    const paths = await this.store.paths(projectRoot, runId);
+    const text = await this.store.loadFinalText(paths, record.outputDigest);
+    return { record, text };
+  }
+
+  async loadPriorRuns(projectRoot: string, runIds: unknown): Promise<PriorRun[]> {
+    const ids = parseRunIds(runIds);
+    if (ids.length === 0) throw new Error("fromRuns requires at least one specialist run id.");
+    if (ids.length > MAX_PRIOR_RUNS) throw new Error(`fromRuns accepts at most ${MAX_PRIOR_RUNS} run ids.`);
+    const loaded: PriorRun[] = [];
+    for (const runId of ids) {
+      const { record, text } = await this.loadStoredOutput(projectRoot, runId);
+      loaded.push({
+        runId: record.runId,
+        title: record.title,
+        agentId: record.agentId,
+        digest: record.outputDigest ?? digestAgentRunText(text),
+        text,
+      });
+    }
+    return loaded;
+  }
+
   async recover(projectRoot: string): Promise<AgentRunRecord[]> {
     this.lifecycleEpoch++;
     this.closedWriters.clear();
@@ -1142,9 +1170,10 @@ export class AgentRunManager {
     const output = truncate(exactOutput);
     let terminalPersistenceError: Error | undefined;
     try {
+      if (output) await this.store.writeFinalText(active.paths, output);
       await this.transition(active, status, {
         exitCode: status === "completed" ? 0 : Math.max(1, code),
-        ...(exactOutput ? { outputDigest: digestAgentRunText(exactOutput) } : {}),
+        ...(output ? { outputDigest: digestAgentRunText(output) } : {}),
         ...(errorCode ? { errorCode } : {}),
         question: undefined,
       });
