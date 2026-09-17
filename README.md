@@ -197,6 +197,8 @@ Shipped default is Grok 4.6: Main Pi is `xai/grok-4.6` at high thinking; childre
 
 For a specific child, Main Pi can set `model: "provider/model[:thinking]"` on `delegate_task`, `workbench_agent_start`, or `workbench_plan` review when the user asked for that exact model. This overrides routing for that call only. Parallel delegation takes a model on each `tasks[]` entry. An unavailable model fails before launch without substitution; `effort` still controls the task budget separately. For related native Coordinator actions, record `workbench_model_policy` once and pass the matching domain.
 
+Pass a prior specialist result to a later child with `fromRuns: ["<runId>"]` instead of restating it. Unknown or unreadable ids fail closed. After the current turn, Main Pi sees a host pointer (`runId` + digest + excerpt) rather than the full dump; stored text stays on the run. Reload it with `workbench_agent_status` `runId` + `output=true`. Invented run ids are not evidence.
+
 `--default` writes `.pi/pi-workbench/config.json` at the **git project root**. Natural-language directives such as `use grok routing this session` keep the other axis (family vs policy) and still move Main Pi.
 
 GPT Luna/Sol children use priority service when `fastMode` is true (project default). Set `"fastMode": false` in project config to disable.

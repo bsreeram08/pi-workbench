@@ -67,6 +67,7 @@ import { registerQmdViewer } from "./qmd-viewer.ts";
 import { registerModelRouting } from "./model-routing.ts";
 import { registerAutomode } from "./automode.ts";
 import { registerSpawnPolicy } from "./spawn-policy.ts";
+import { registerChildHandoff } from "./child-handoff.ts";
 import { registerWorkbenchUpdate } from "./workbench-update.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import type { AgentResult, AgentSpec, CouncilSession, Exec } from "./types.ts";
@@ -1004,6 +1005,7 @@ export default function piWorkbench(pi: ExtensionAPI) {
 
   registerAutomode(pi, (title, body) => report(pi, title, body));
   registerSpawnPolicy(pi, (title, body) => report(pi, title, body));
+  registerChildHandoff(pi);
 
   registerWorkflow(pi, {
     exec,

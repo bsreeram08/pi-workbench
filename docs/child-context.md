@@ -31,10 +31,16 @@ The child context includes source paths and a `Skills not supplied` summary with
 
 Implementation aliases, including `developer`, `fixer`, `integration-implementer`, and roles ending in `-implementation`, receive the implementer profile's selection. Other supported aliases map verification, architecture, and product roles to their corresponding workflow profiles.
 
+## Specialist handoff
+
+Children still receive an explicit prompt, not the parent transcript. After a specialist settles, the host stores its final text on the run (`final-text.md` beside the integrity-checked record).
+
+The current Main Pi turn keeps the full returned text so it can synthesize. Later turns replace that dump in the model context with a host-issued pointer (`runId`, status, digest, excerpt). Session history and stored runs are unchanged. Reload a dump with `workbench_agent_status` `output=true`, or pass it to another child with `fromRuns`. Unknown run ids fail closed. Invented run ids are not evidence.
+
 ## Verification
 
 ```sh
-rtk proxy bun test tests/agent-context.test.ts tests/agent-run-manager.test.ts tests/workflow-orchestration.test.ts
+rtk proxy bun test tests/agent-context.test.ts tests/agent-run-manager.test.ts tests/workflow-orchestration.test.ts tests/child-handoff.test.ts
 ```
 
 These regressions cover complete skill contents, per-file and combined limits, invalid optional files, source precedence, strict repository-instruction failures, and child/workflow integration. For a live visual task and expected outcomes, see [Testing the harness](testing-harness.md). For launch errors, see [Troubleshooting](troubleshooting.md).

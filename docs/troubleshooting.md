@@ -48,6 +48,10 @@ Current `Context file exceeds 24000 bytes` or `Context file is not a regular fil
 
 `Skills not supplied` in child context reports missing files, read failures, invalid file kinds, or budget limits. It is not by itself a workflow failure. Inspect the reported source and reason if that guidance is needed. A faulty higher-priority copy prevents fallback to another copy; correct that source before retrying. Workbench does not install missing skills during launch.
 
+## A later turn seems to have forgotten a specialist dump
+
+That is expected after the current synthesis turn. The host keeps a `runId` pointer in later Main Pi context and stores the full text on the run. Use `workbench_agent_status` with that `runId` and `output=true`, or pass `fromRuns: ["<runId>"]` to the next child. An unknown id fails closed; do not invent run ids.
+
 ## Project trust or model selection looks wrong
 
 For an untrusted project, run `/trust` and restart Pi before launching children. Reloading an extension is separate from restarting after a new project-trust decision.

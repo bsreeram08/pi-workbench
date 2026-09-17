@@ -11,6 +11,7 @@ async function privatePaths(root: string): Promise<AgentRunPaths> {
     root,
     record: path.join(root, "record.json"),
     systemPrompt: path.join(root, "system-prompt.md"),
+    finalText: path.join(root, "final-text.md"),
     sessions: path.join(root, "sessions"),
     temporaryHome: path.join(root, "home"),
     temporaryDirectory: path.join(root, "tmp"),
