@@ -91,6 +91,9 @@ describe("task-specific child context", () => {
   test("does not route ordinary words as UI work or long text as hard work", () => {
     expect(routeConcepts("Fix the build requirements", "implementer").packs).not.toContain("design");
     expect(routeConcepts("Improve UI animation", "implementer").packs).toContain("design");
+    expect(routeConcepts("Rebuild the billing page", "implementer").packs).not.toContain("design");
+    expect(routeConcepts("Rebuild the billing page", "implementer", "visual").skills).toContain("emil-design-eng");
+    expect(routeConcepts("Rebuild the billing page", "implementer", "visual").skills).toContain("animate");
     const request = { task: "Find README", role: "codebase-explorer", readOnly: true };
     expect(routeTask({ ...request, task: `${request.task}\n${"x".repeat(2000)}` }).effort).toBe(routeTask(request).effort);
   });
@@ -99,5 +102,7 @@ describe("task-specific child context", () => {
     const prompt = buildCodeReviewTask("quality-reviewer", "task", "plan", "AUTHOR-CERTAINTY-SENTINEL");
     expect(prompt).not.toContain("AUTHOR-CERTAINTY-SENTINEL");
     expect(prompt).toContain("Form your own assessment");
+    expect(prompt).not.toContain("A passing build is not visual completion");
+    expect(buildCodeReviewTask("quality-reviewer", "task", "plan", "", undefined, undefined, "visual")).toContain("A passing build is not visual completion");
   });
 });

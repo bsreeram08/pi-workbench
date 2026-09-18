@@ -41,6 +41,7 @@ import {
   createWorkflowPlanId,
   formatWorkflowPlanStatus,
   getWorkflowPaths,
+  isCompleteVisualDesignBrief,
   loadCurrentWorkflowPlan,
   saveWorkflowPlan,
   WorkflowStateSnapshotMismatchError,
@@ -52,9 +53,11 @@ import {
   evaluateWorkflowVerification,
   formatWorkflowVerificationFailures,
   packetVerificationPasses,
+  visualPacketHasRequiredEvidence,
   type WorkflowPacketVerification,
   type WorkflowTaskPacket,
 } from "./workflow-task-packet.ts";
+import { parsePlanRequest } from "./workflow-request.ts";
 import { loadConfig, type WorkbenchConfig } from "./config.ts";
 import type { WorkbenchDashboardController } from "./dashboard-controller.ts";
 import { ensureProjectState, findProjectRoot, getProjectPaths, resolveGitCheckoutRoot } from "./project.ts";
@@ -214,7 +217,13 @@ function shortened(text: string, limit = 80): string {
   return single.length > limit ? `${single.slice(0, limit - 1)}…` : single;
 }
 
-function createPlanState(id: string, task: string, plan: string, interviewNotes: string): WorkflowPlanState {
+function createPlanState(
+  id: string,
+  task: string,
+  plan: string,
+  interviewNotes: string,
+  extras?: Pick<WorkflowPlanState, "surface" | "designBrief">,
+): WorkflowPlanState {
   const timestamp = now();
   return {
     version: 1,
@@ -228,6 +237,8 @@ function createPlanState(id: string, task: string, plan: string, interviewNotes:
     reviewRounds: 0,
     planPath: "",
     verificationMode: "packet",
+    ...(extras?.surface ? { surface: extras.surface } : {}),
+    ...(extras?.designBrief ? { designBrief: extras.designBrief } : {}),
   };
 }
 
@@ -296,6 +307,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     validateResult = true,
     model?: string,
     writerContext?: Pick<AgentRunContext, "writerBinding" | "continuation">,
+    surface?: "visual",
   ): Promise<AgentResult> {
     throwIfWorkflowCancelled(signal);
     const base = getWorkflowAgentProfile(role);
@@ -317,11 +329,11 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     const result = await runAgent(
       root,
       agent,
-      buildWorkflowSystemPrompt(agent, reprompterPath, userTask, communityKnowledgePath),
+      buildWorkflowSystemPrompt(agent, reprompterPath, userTask, communityKnowledgePath, surface),
       guidance ? `${guidance}\n\n${delegatedTask}` : delegatedTask,
       signal,
       progress.update,
-      { dashboard, groupId, groupTitle, jobId, budget: route.budget, contextTask: userTask, ...writerContext },
+      { dashboard, groupId, groupTitle, jobId, budget: route.budget, contextTask: userTask, ...(surface ? { surface } : {}), ...writerContext },
     );
     throwIfWorkflowCancelled(signal);
     const routedResult: AgentResult = {
@@ -346,6 +358,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     groupId: string,
     groupTitle: string,
     signal?: AbortSignal,
+    surface?: "visual",
   ): Promise<AgentResult[]> {
     throwIfWorkflowCancelled(signal);
     if (tasks.length > config.workflowMaxParallelAgents) {
@@ -372,6 +385,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       effort,
       false,
       model,
+      undefined,
+      surface,
     )));
     throwIfWorkflowCancelled(signal);
     return assertMandatoryAgentBatch(results, groupTitle);
@@ -387,18 +402,20 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     signal?: AbortSignal,
     reviewHistory = "",
     model?: string,
+    surface?: "visual",
   ): Promise<AgentResult[]> {
     const roles = reviewRoles(config);
     progress.update(`plan review ${round}: ${roles.join(", ")}`);
     return runRoleBatch(
       root,
       config,
-      roles.map((role) => ({ role, task: buildPlanReviewTask(role, task, plan, reviewHistory), model })),
+      roles.map((role) => ({ role, task: buildPlanReviewTask(role, task, plan, reviewHistory, surface), model })),
       task,
       progress,
       `plan-review-${round}`,
       `Plan review ${round}`,
       signal,
+      surface,
     );
   }
 
@@ -409,7 +426,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     task: string,
     ctx: ExtensionCommandContext,
     progress: Progress,
-    options: { autonomous: boolean; autoApprove: boolean; revision?: { previous: WorkflowPlanState; feedback: string } },
+    options: { autonomous: boolean; autoApprove: boolean; revision?: { previous: WorkflowPlanState; feedback: string }; surface?: "visual" },
     signal?: AbortSignal,
   ): Promise<PlanningResult> {
     const workflowPaths = getWorkflowPaths(projectPaths.stateDir);
@@ -417,7 +434,11 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     let interviewNotes = options.revision
       ? [options.revision.previous.interviewNotes, `Revision of plan ${options.revision.previous.id}.\nUSER REVISION REQUEST:\n${options.revision.feedback || "Resolve the remaining material blockers while preserving the original task."}`].filter(Boolean).join("\n\n")
       : "";
-    let state = createPlanState(id, task, options.revision?.previous.plan ?? "# Planning in progress", interviewNotes);
+    const surface = options.surface ?? options.revision?.previous.surface;
+    let state = createPlanState(id, task, options.revision?.previous.plan ?? "# Planning in progress", interviewNotes, {
+      ...(surface ? { surface } : {}),
+      ...(options.revision?.previous.designBrief ? { designBrief: options.revision.previous.designBrief } : {}),
+    });
     await saveWorkflowPlan(workflowPaths, state);
     throwIfWorkflowCancelled(signal);
     const discoveryRoles = selectPlanningDiscoveryAgentIds(task);
@@ -549,6 +570,9 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     let reviewedPacket: WorkflowTaskPacket;
     try {
       reviewedPacket = bindWorkflowTaskPacket(plan);
+      if (state.surface === "visual" && !visualPacketHasRequiredEvidence(reviewedPacket)) {
+        throw new Error("Visual plans require acceptance criteria with runtime-observation and artifact-inspection evidence.");
+      }
     } catch (error) {
       state.status = "blocked";
       await saveWorkflowPlan(workflowPaths, state);
@@ -562,7 +586,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     const reviewHistory: string[] = [];
     for (let round = 1; round <= config.workflowMaxPlanReviewLoops; round++) {
       await writeWorkflowRunArtifact(workflowPaths, id, `plan-draft-${round}.md`, plan);
-      reviews = await reviewPlan(root, config, task, plan, progress, round, signal, reviewHistory.join("\n\n"));
+      reviews = await reviewPlan(root, config, task, plan, progress, round, signal, reviewHistory.join("\n\n"), undefined, surface);
       throwIfWorkflowCancelled(signal);
       state.reviewRounds = round;
       state.updatedAt = now();
@@ -596,6 +620,9 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       state.updatedAt = now();
       try {
         reviewedPacket = bindWorkflowTaskPacket(plan);
+        if (state.surface === "visual" && !visualPacketHasRequiredEvidence(reviewedPacket)) {
+          throw new Error("Visual plans require acceptance criteria with runtime-observation and artifact-inspection evidence.");
+        }
       } catch (error) {
         state.status = "blocked";
         await saveWorkflowPlan(workflowPaths, state);
@@ -608,6 +635,15 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
 
     if (options.autoApprove) {
       throwIfWorkflowCancelled(signal);
+      if (state.surface === "visual" && !isCompleteVisualDesignBrief(state.designBrief)) {
+        state.status = "blocked";
+        state.plan = plan;
+        state.updatedAt = now();
+        await saveWorkflowPlan(workflowPaths, state);
+        progress.finish("blocked", "Visual plan is missing a taste lock");
+        report("Workflow plan blocked", `Visual plans need a complete design brief including references and refusals before approval. Use \`/plan --visual\` so Main Pi can lock taste with you.\n\nDraft: ${state.planPath}`);
+        return { state, cancelled: false, executable: false };
+      }
       state.status = "approved";
       state.plan = plan;
       state.verificationMode = "packet";
@@ -647,7 +683,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       }
       await saveWorkflowPlan(workflowPaths, state);
       await writeWorkflowRunArtifact(workflowPaths, id, "plan-draft-user-edit.md", editedPlan);
-      const editedReviews = await reviewPlan(root, config, task, editedPlan, progress, "user-edit", signal, reviewHistory.join("\n\n"));
+      const editedReviews = await reviewPlan(root, config, task, editedPlan, progress, "user-edit", signal, reviewHistory.join("\n\n"), undefined, surface);
       throwIfWorkflowCancelled(signal);
       state.reviewRounds += 1;
       await writeWorkflowRunArtifact(workflowPaths, id, "plan-review-user-edit.md", planReviewText(editedReviews));
@@ -732,6 +768,11 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       "Implementer implementation",
       agentJobId("implementation", "implementer", 1),
       signal,
+      "auto",
+      true,
+      undefined,
+      undefined,
+      state.surface,
     );
     throwIfWorkflowCancelled(signal);
     await writeWorkflowRunArtifact(workflowPaths, state.id, "implementation-1.md", implementation.output);
@@ -748,12 +789,13 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       const reviews = await runRoleBatch(
         root,
         config,
-        reviewRoles(config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, implementation.output, state.packet, impact) })),
+        reviewRoles(config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, implementation.output, state.packet, impact, state.surface) })),
         state.task,
         progress,
         `execution-review-${cycle}`,
         `Execution review ${cycle}`,
         signal,
+        state.surface,
       );
       throwIfWorkflowCancelled(signal);
       const reviewsText = formatAgentResults(reviews);
@@ -851,8 +893,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   }
 
   async function runPlanningCommand(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-    if (!/^--pipeline(?:\s|$)/i.test(rawArgs.trim())) return startCoordinatorPlanning(rawArgs, ctx);
-    rawArgs = rawArgs.trim().replace(/^--pipeline\s*/i, "");
+    const parsed = parsePlanRequest(rawArgs);
+    if (!parsed.pipeline) return startCoordinatorPlanning(rawArgs, ctx);
     const trustRequired = guardSubagentLaunch(ctx);
     if (trustRequired) {
       report("Project trust required", trustRequired);
@@ -862,18 +904,18 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       report("Planner unavailable", "`/plan` requires interactive UI for its interview and approval checkpoints.");
       return;
     }
-    const request = await getTaskInput(rawArgs, ctx, "Planner planning request");
-    if (!request) return;
+    const request = await getTaskInput(parsed.revise ? parsed.feedback : parsed.task, ctx, "Planner planning request");
+    if (!parsed.revise && !request) return;
     const project = await resolveProject(ctx);
     const authority = await captureWorkflowAuthority(project.workflowPaths);
-    const revise = /^(?:--revise(?:\s|$)|revise (?:the )?plan[.!]?$)/i.test(request.trim());
-    const previous = revise ? authority.state : undefined;
-    if (revise && (!previous || previous.execution || previous.status === "executing" || previous.status === "verified")) {
+    const previous = parsed.revise ? authority.state : undefined;
+    if (parsed.revise && (!previous || previous.execution || previous.status === "executing" || previous.status === "verified")) {
       report("Workflow revision unavailable", "`/plan --revise` requires an existing plan whose implementation has not started. Use `/plan <full task>` for new work.");
       return;
     }
     const task = previous?.task ?? request;
-    const revision = previous ? { previous, feedback: request.trim().startsWith("--") ? request.trim().replace(/^--revise\s*/i, "") : "" } : undefined;
+    const revision = previous ? { previous, feedback: parsed.feedback } : undefined;
+    const surface = parsed.visual || previous?.surface === "visual" ? "visual" as const : undefined;
     const confirmed = await ctx.ui.confirm(
       revision ? "Revise the current workflow plan?" : "Start high-accuracy Workflow planning?",
       `${revision ? `Carry forward task: ${task}\nPrevious plan: ${previous!.id}\n\n` : ""}Pi will use the ${project.config.workflowMode} workflow: discovery, a bounded Planner interview, planning, and up to ${project.config.workflowMaxPlanReviewLoops} independent review rounds. No source files will be changed.`,
@@ -887,7 +929,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         dashboard.beginRun(`workflow-plan-${Date.now()}`, runController);
         const progress = progressFor(pi, ctx, "Planner", task, "plan");
         try {
-          const result = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: false, autoApprove: false, revision }, runController.signal);
+          const result = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: false, autoApprove: false, revision, ...(surface ? { surface } : {}) }, runController.signal);
           if (result.state) {
             report(
               result.state.status === "approved" ? "Workflow plan approved" : "Workflow plan saved",
@@ -995,7 +1037,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       report("Autopilot unavailable", "`/autopilot` requires interactive UI for its initial cost and write confirmation.");
       return;
     }
-    const task = await getTaskInput(rawArgs, ctx, "Autopilot request");
+    const parsed = parsePlanRequest(rawArgs);
+    const task = await getTaskInput(parsed.task, ctx, "Autopilot request");
     if (!task) return;
     const project = await resolveProject(ctx);
     const authority = await captureWorkflowAuthority(project.workflowPaths);
@@ -1012,7 +1055,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         dashboard.beginRun(`workflow-autopilot-${Date.now()}`, runController);
         const progress = progressFor(pi, ctx, "Autopilot", task, "autopilot");
         try {
-          const planning = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: true, autoApprove: true }, runController.signal);
+          const planning = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: true, autoApprove: true, ...(parsed.visual ? { surface: "visual" as const } : {}) }, runController.signal);
           throwIfWorkflowCancelled(runController.signal);
           if (!planning.state || !planning.executable) {
             progress.finish(planning.cancelled ? "cancelled" : "needs_attention", planning.cancelled ? "Planning cancelled" : "Planning did not produce an executable plan");
@@ -1057,8 +1100,10 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
       if (ownsRun) dashboard.beginRun(`coordinator-review-${Date.now()}`);
       const progress = progressFor(pi, ctx, "Coordinator", state.task, "plan", false);
       try {
-        const direction = state.designBrief ? `${state.task}\n\nCoordinator design brief (review together with this plan):\n${JSON.stringify(state.designBrief)}\nDo not reopen deliberate style choices unless they violate requirements or new evidence identifies a defect.` : state.task;
-        return await reviewPlan(project.root, project.config, direction, state.plan, progress, state.reviewRounds, signal, history, model);
+        const direction = state.designBrief
+          ? `${state.task}\n\nCoordinator design brief (review together with this plan):\n${JSON.stringify(state.designBrief)}\n${state.surface === "visual" ? "Reject generic or off-brief direction. Do not reopen a lock that still matches." : "Do not reopen deliberate style choices unless they violate requirements or new evidence identifies a defect."}`
+          : state.task;
+        return await reviewPlan(project.root, project.config, direction, state.plan, progress, state.reviewRounds, signal, history, model, state.surface);
       } finally {
         progress.clear();
         if (ownsRun) dashboard.endRun();
@@ -1081,9 +1126,10 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         root, project.config, "implementer", state.task,
         continuation
           ? `Main Pi's new bounded correction:\n${task}\nUse the retained task context, but execute only this correction. Do not replay the original assignment. Preserve approved constraints and unrelated work. Return evidence and unresolved questions to Main Pi.`
-          : buildImplementationTask(state.task, state.plan, `Main Pi's bounded assignment:\n${task}\nDo only this slice; return evidence and open questions to Main Pi.${state.designBrief ? `\nApproved design brief:\n${JSON.stringify(state.designBrief)}` : ""}`, state.packet),
+          : buildImplementationTask(state.task, state.plan, `Main Pi's bounded assignment:\n${task}\nDo only this slice; return evidence and open questions to Main Pi.${state.designBrief ? `\nApproved design brief:\n${JSON.stringify(state.designBrief)}` : ""}${state.surface === "visual" ? "\nDo not claim completion from tests alone. Named routes must be captured for host visual inspection." : ""}`, state.packet),
         progress, "coordinator-implementation", "Implementation", agentJobId("coordinator", "implementer", Date.now()), signal, "auto", false, model,
         { writerBinding: { planId: state.id, taskDigest: createHash("sha256").update(JSON.stringify({ task: state.task, plan: state.plan, designBrief: state.designBrief })).digest("hex") }, continuation },
+        state.surface,
       ));
     },
     verify(project, state, assessment, model, signal, ctx) {
@@ -1095,8 +1141,8 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
           impact = await loadLatestImpactReceipt(path.join(project.workflowPaths.runs, state.id), snapshot);
         } catch { /* Review proceeds without a receipt when the artifact cannot be loaded. */ }
         const reviews = await runRoleBatch(root, project.config,
-          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\nPreserve deliberate design decisions; reject only concrete defects.` : "", state.packet, impact), model })),
-          state.task, progress, "coordinator-review", "Independent review", signal);
+          reviewRoles(project.config).map((role) => ({ role, task: buildCodeReviewTask(role, state.task, state.plan, state.designBrief ? `Approved design brief (requirements, not evidence of success):\n${JSON.stringify(state.designBrief)}\n${state.surface === "visual" ? "Off-brief, generic, inaccessible, or unexercised surfaces are blockers." : "Preserve deliberate design decisions; reject only concrete defects."}` : "", state.packet, impact, state.surface), model })),
+          state.task, progress, "coordinator-review", "Independent review", signal, state.surface);
         const verification = await runRole(root, project.config, "quality-reviewer", state.task,
           state.packet ? buildPacketVerificationTask(state.task, state.plan, "", state.packet) : buildIndependentVerificationTask(state.task, state.plan, ""),
           progress, "coordinator-verification", "Native verification", agentJobId("coordinator", "verification", Date.now()), signal);
@@ -1317,7 +1363,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   });
 
   pi.registerCommand("plan", {
-    description: "Main Pi directs planning with native review tools; --revise keeps the draft, --pipeline uses automatic stages",
+    description: "Main Pi directs planning with native review tools; --visual for UI, --revise keeps the draft, --pipeline uses automatic stages",
     handler: runPlanningCommand,
   });
 

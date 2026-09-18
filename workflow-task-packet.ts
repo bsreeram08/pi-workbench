@@ -202,6 +202,11 @@ export function parseWorkflowTaskPacket(plan: string): WorkflowTaskPacketDeclara
   return value;
 }
 
+export function visualPacketHasRequiredEvidence(packet: Pick<WorkflowTaskPacket, "acceptanceCriteria">): boolean {
+  const kinds = new Set(packet.acceptanceCriteria.flatMap((criterion) => criterion.requiredEvidenceKinds));
+  return kinds.has("runtime-observation") && kinds.has("artifact-inspection");
+}
+
 export function bindWorkflowTaskPacket(plan: string): WorkflowTaskPacket {
   const trimmed = plan.trim();
   const declaration = parseWorkflowTaskPacket(trimmed);

@@ -9,7 +9,7 @@ const MAX_SKILL_BYTES = 64_000;
 
 /** Explicit, inspectable context for isolated children. No extension code is loaded. */
 export async function buildAgentContext(options: {
-  projectRoot: string; agentDir: string; home: string; role: string; task: string;
+  projectRoot: string; agentDir: string; home: string; role: string; task: string; surface?: "visual";
 }): Promise<string> {
   const parts: string[] = [
     "## Delegated context",
@@ -48,7 +48,7 @@ export async function buildAgentContext(options: {
   }
   const aliases: Record<string, string> = { developer: "implementer", fixer: "implementer", "integration-implementer": "implementer", verifier: "quality-reviewer", qa: "quality-reviewer", architect: "technical-reviewer", product: "requirements-analyst" };
   const profile = getWorkflowAgentProfile(aliases[options.role] ?? (options.role.endsWith("-implementation") ? "implementer" : options.role));
-  const skills = profile ? routeConcepts(options.task, profile.id).skills : [];
+  const skills = profile ? routeConcepts(options.task, profile.id, options.surface).skills : [];
   let skillBytes = 0;
   const omitted: string[] = [];
   for (const name of skills) {

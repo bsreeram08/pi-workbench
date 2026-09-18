@@ -11,10 +11,12 @@ import { readTaskModelPolicy, resolveTaskModel, setTaskModelPreference } from ".
 import { readReviewContinuity, summarizeReviewContinuity } from "./review-continuity.ts";
 import { throwIfWorkflowCancelled } from "./agent-result-guard.ts";
 import { WORKFLOW_PLAN_FORMAT, planReviewsPass, reviewProtocolValid, parsePlanVerdict } from "./workflow-prompts.ts";
-import { bindWorkflowTaskPacket, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
+import { bindWorkflowTaskPacket, visualPacketHasRequiredEvidence, type WorkflowTaskPacket } from "./workflow-task-packet.ts";
+import { parsePlanRequest } from "./workflow-request.ts";
+import { looksLikeVisualTask } from "./workflow-concepts.ts";
 import {
   assertWorkflowAuthorityUnchanged, captureWorkflowAuthority, createWorkflowPlanId,
-  saveWorkflowPlan, writeWorkflowRunArtifact,
+  isCompleteVisualDesignBrief, saveWorkflowPlan, writeWorkflowRunArtifact,
   type WorkflowAuthoritySnapshot, type WorkflowPaths, type WorkflowPlanState,
 } from "./workflow-state.ts";
 
@@ -77,6 +79,9 @@ Prior draft and decisions (context, not approval):
 ${state.plan}
 ${state.interviewNotes}
 ${state.designBrief ? `Recorded design brief (preserve unless deliberately revised):\n${JSON.stringify(state.designBrief)}` : ""}
+${state.surface === "visual" ? `
+This is a visual plan. Completion is the rendered surface, not the diff. Interview taste before review: references (what it should look like), refusals (what it must not look like, including generic LLM/SaaS defaults), hierarchy, density, and motion. Use workbench_ask for those preferences. Copy the answers into designBrief on workbench_plan review: direction, hierarchy, interactions, responsiveAccessibility, constraints, references, and refusals. Review rejects a missing or incomplete brief and a packet without runtime-observation and artifact-inspection evidence. Do not submit a visual plan without that lock.
+` : ""}
 
 Explain your approach briefly, inspect the actual project, and make the consequential product and architecture decisions yourself. For material tradeoffs, record the chosen direction, evidence, alternatives considered, and why it fits the user. Routine choices need no options ceremony. Ask the user only when a preference or missing fact materially changes the outcome; use workbench_ask when useful.
 
@@ -136,7 +141,9 @@ export function registerCoordinatorPlanning(pi: ExtensionAPI, deps: Dependencies
         interactions: Type.String({ minLength: 1, maxLength: 4000 }),
         responsiveAccessibility: Type.String({ minLength: 1, maxLength: 4000 }),
         constraints: Type.String({ minLength: 1, maxLength: 4000 }),
-      }, { description: "Coordinator's visual direction, reviewed and approved with the plan; normal review only" })),
+        references: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
+        refusals: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
+      }, { description: "Coordinator's visual direction, reviewed and approved with the plan; visual plans require references and refusals" })),
     }),
     async execute(_id, params, signal, onUpdate, ctx) {
       const operationGeneration = generation;
@@ -217,6 +224,11 @@ export function registerCoordinatorPlanning(pi: ExtensionAPI, deps: Dependencies
         }
         if (recovering && !recoverable(state)) throw new Error("Review recovery is no longer available.");
         if (!recovering && state.reviewRounds >= project.config.workflowMaxPlanReviewLoops) throw new Error("Plan review limit reached. Use recover for an interrupted or lost passing review, or a user-requested /plan --revise for unresolved findings.");
+        if (state.surface === "visual" && !recovering) {
+          const brief = params.designBrief ?? state.designBrief;
+          if (!isCompleteVisualDesignBrief(brief)) throw new Error("Visual plans require a design brief including references and refusals.");
+          if (!visualPacketHasRequiredEvidence(packet)) throw new Error("Visual plans require acceptance criteria with runtime-observation and artifact-inspection evidence.");
+        }
         tickets.delete(project.root);
         const previous = histories.get(project.root);
         const continuityBefore = await readReviewContinuity(paths, state.id, "plan");
@@ -289,20 +301,26 @@ export function registerCoordinatorPlanning(pi: ExtensionAPI, deps: Dependencies
     const trust = guardSubagentLaunch(ctx);
     if (trust) { deps.report("Project trust required", trust); return; }
     if (!ctx.hasUI) { deps.report("Planner unavailable", "/plan requires interactive UI."); return; }
-    const input = request.trim() || (await ctx.ui.editor("Planning request", ""))?.trim();
-    if (!input) return;
+    const parsed = parsePlanRequest(request.trim());
+    let taskText = parsed.task;
+    if (!parsed.revise && !taskText) taskText = (await ctx.ui.editor("Planning request", ""))?.trim() ?? "";
+    if (!parsed.revise && !taskText) return;
     const project = await deps.resolveProject(ctx);
     const authority = await captureWorkflowAuthority(project.workflowPaths);
-    const revise = /^(?:--revise(?:\s|$)|revise (?:the )?plan[.!]?$)/i.test(input);
-    const previous = revise ? authority.state : undefined;
-    if (revise && !editable(previous)) { deps.report("Workflow revision unavailable", "Revision requires an existing plan whose implementation has not started."); return; }
-    const feedback = revise && input.startsWith("--") ? input.replace(/^--revise\s*/i, "") : "";
+    const previous = parsed.revise ? authority.state : undefined;
+    if (parsed.revise && !editable(previous)) { deps.report("Workflow revision unavailable", "Revision requires an existing plan whose implementation has not started."); return; }
+    const feedback = parsed.feedback;
     const timestamp = new Date().toISOString();
-    const task = previous?.task ?? input;
+    const task = previous?.task ?? taskText;
+    let visual = parsed.visual || previous?.surface === "visual";
+    if (!visual && !parsed.revise && looksLikeVisualTask(task)) {
+      visual = await ctx.ui.confirm("This looks like visual/UI work. Use the visual loop (taste lock + browser capture)?", task);
+    }
     const state: WorkflowPlanState = {
       version: 1, id: createWorkflowPlanId(task), task, status: "draft",
       plan: previous?.plan ?? "# Planning in progress",
       ...(previous?.designBrief ? { designBrief: previous.designBrief } : {}),
+      ...(visual ? { surface: "visual" as const } : {}),
       interviewNotes: [previous?.interviewNotes, feedback && `User revision request: ${feedback}`].filter(Boolean).join("\n\n"),
       createdAt: timestamp, updatedAt: timestamp, reviewRounds: 0, planPath: "", verificationMode: "packet",
     };

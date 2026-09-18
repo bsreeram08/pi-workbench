@@ -25,6 +25,7 @@ export function buildWorkflowSystemPrompt(
   _reprompterPath: string,
   task: string,
   communityKnowledgePath?: string,
+  surface?: "visual",
 ): string {
   const access = agent.readOnly
     ? "You are READ-ONLY. Do not write, edit, delete, install, commit, or generate project files. Safe inspection and verification commands are allowed."
@@ -46,7 +47,7 @@ ${access}
 
 When the request is underspecified, identify the desired behavior, constraints, and observable success before proceeding. Your delegated context supplies the applicable repository instructions and selected skills.
 
-${formatConceptGuidance(task, agent.id, communityKnowledgePath)}
+${formatConceptGuidance(task, agent.id, communityKnowledgePath, surface)}
 
 Return concise Markdown. Include exact file paths and commands whenever they support a consequential finding.`;
 }
@@ -181,15 +182,20 @@ Marker rules: exact field order shown; scope and nonGoals each contain 1-16 uniq
 
 export const WORKFLOW_FINDINGS_FORMAT = `Marker rules: exact field order shown; findings contains 0-32 entries. Every finding has exactly id, severity, path, startLine, endLine, evidenceDigest, summary in that order. IDs are unique kebab-case strings starting with a letter and at most 64 bytes. severity is blocker, warning, or note. path is a project-relative file path at most 500 UTF-8 bytes with no \`..\`, empty, or absolute segments. startLine is an integer ≥ 1; endLine is an integer ≥ startLine. evidenceDigest is sha256: plus 64 lowercase hex of the UTF-8 bytes of lines startLine through endLine joined by a newline. summary is a trimmed one-line string at most 500 bytes. Text must not contain control characters, U+2028, U+2029, or unpaired surrogates. The marker JSON must be canonical compact JSON with no duplicate, reordered, or unknown fields. PASS may include notes only; CHANGES_REQUIRED and BLOCKED require at least one finding. A missing, fenced, reordered, contradictory, or ungrounded envelope is a protocol failure, not a product verdict.`;
 
+const VISUAL_PLAN_REVIEW = "This is a visual plan. Taste-lock completeness is a blocker: generic direction (\"modern, clean, professional\"), missing references/refusals, or a packet without runtime-observation and artifact-inspection must REJECT. Off-brief visual direction is a blocker. Do not reopen a lock that still matches the user's references and refusals. The usual rule against stylistic preferences does not apply to taste-lock violations.";
+const VISUAL_CODE_REVIEW = "This is visual work. Off-brief, generic, inaccessible, or unexercised surfaces are blockers even when tests pass. Do not re-litigate a lock the rendered surface still matches. A passing build is not visual completion.";
+
 export function buildPlanReviewTask(
   role: "quality-reviewer" | "technical-reviewer",
   task: string,
   plan: string,
   reviewHistory = "",
+  surface?: "visual",
 ): string {
   const focus = role === "quality-reviewer"
     ? "Check executability: verified paths, internal consistency, usable starting points, explicit QA scenarios, and whether any missing information completely blocks a worker. Do not reject for minor details a competent implementer can resolve."
     : "Independently check architecture, correctness, failure handling, scope boundaries, and whether the proposed verification actually proves the requested outcome.";
+  const visual = surface === "visual" ? `\n${VISUAL_PLAN_REVIEW}\n` : "";
   return `Review this implementation plan before any source change.
 
 USER TASK:
@@ -199,8 +205,8 @@ PLAN:
 ${plan}
 
 ${focus}
-
-Review the whole requested scope on the first pass, including source-data coverage and failure-path verification. Reject only for material correctness, safety, scope, or verification gaps that prevent responsible implementation. Concrete implementation advice is non-blocking when the plan already specifies the required behavior and a competent implementer can choose the mechanism without a consequential design decision.
+${visual}
+Review the whole requested scope on the first pass, including source-data coverage and failure-path verification. ${surface === "visual" ? "Taste-lock violations, generic UI, and missing surface evidence kinds are material blockers." : "Reject only for material correctness, safety, scope, or verification gaps that prevent responsible implementation. Concrete implementation advice is non-blocking when the plan already specifies the required behavior and a competent implementer can choose the mechanism without a consequential design decision."}
 
 PRIOR INDEPENDENT REVIEW HISTORY:
 ${reviewHistory || "(first review; no prior findings)"}
@@ -303,6 +309,7 @@ export function buildCodeReviewTask(
   implementation: string,
   packet?: WorkflowTaskPacket,
   impact?: ImpactReceipt,
+  surface?: "visual",
 ): string {
   const focus = role === "quality-reviewer"
     ? "Check exact conformance to the approved plan, regression coverage, repository standards, and unsupported completion claims."
@@ -317,7 +324,7 @@ APPROVED PLAN:
 ${plan}
 ${packetBindingPrompt(packet)}
 ${focus}
-
+${surface === "visual" ? `\n${VISUAL_CODE_REVIEW}\n` : ""}
 Form your own assessment from the request, acceptance criteria, code, and tests. The implementer's self-assessment is deliberately omitted. Inspect the real diff and run safe checks when useful. Findings must name severity, path, evidence, and concrete fix. Quote a contiguous line range from a current project file; the host will hash those lines. Return:
 ## Verdict
 ## Findings
