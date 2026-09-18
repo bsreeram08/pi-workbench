@@ -133,6 +133,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/goals-set <objective>` | Create or replace the goal. The agent does not create goals |
 | `/goals-clear` | Remove the goal file |
 | `/plan [task]` | Clarify, plan, and independently review acceptance criteria |
+| `/plan --visual [task]` | Same, as a visual plan (taste lock + host loopback capture). `--ui` is an alias |
 | `/plan --pipeline [task]` | Use the automatic discovery/planner/reviewer sequence |
 | `/plan --revise [feedback]` | Replan from the current task and draft before implementation starts |
 | `/start-work` | Implement, independently review, repair, and verify the approved plan |

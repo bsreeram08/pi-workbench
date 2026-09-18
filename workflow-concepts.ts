@@ -29,10 +29,15 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-export function routeConcepts(task: string, agentId: WorkflowAgentId): ConceptRouting {
+export function looksLikeVisualTask(task: string): boolean {
+  return includesAny(task, UI_TERMS);
+}
+
+export function routeConcepts(task: string, agentId: WorkflowAgentId, surface?: "visual"): ConceptRouting {
   const skills: string[] = [];
   const principles: string[] = [];
   const packs: ConceptRouting["packs"] = ["engineering"];
+  const visual = surface === "visual" || includesAny(task, UI_TERMS);
 
   // Matt Pocock's engineering discipline is the baseline: alignment, shared language,
   // small feedback loops, deep modules, and tests at observable seams.
@@ -69,8 +74,8 @@ export function routeConcepts(task: string, agentId: WorkflowAgentId): ConceptRo
     principles.push("For defects, establish a reproducing feedback loop, minimize, hypothesize, instrument, then fix and regression-test.");
   }
 
-  // Emil Kowalski's design-engineering concepts apply only to user-facing work.
-  if (includesAny(task, UI_TERMS)) {
+  // Emil Kowalski's design-engineering concepts apply to user-facing work and visual plans.
+  if (visual) {
     packs.push("design");
     skills.push(
       agentId === "quality-reviewer" ? "review-animations" : "emil-design-eng",
@@ -103,8 +108,8 @@ export function routeConcepts(task: string, agentId: WorkflowAgentId): ConceptRo
   return { skills: unique(skills), principles: unique(principles), packs: unique(packs) as ConceptRouting["packs"] };
 }
 
-export function formatConceptGuidance(task: string, agentId: WorkflowAgentId, communityKnowledgePath?: string): string {
-  const routed = routeConcepts(task, agentId);
+export function formatConceptGuidance(task: string, agentId: WorkflowAgentId, communityKnowledgePath?: string, surface?: "visual"): string {
+  const routed = routeConcepts(task, agentId, surface);
   const skillLine = routed.skills.length > 0
     ? `Relevant skill candidates: ${routed.skills.map((skill) => `\`${skill}\``).join(", ")}. Use the selected skill content supplied in your delegated context when it fits this task. Missing skills are not a reason to search outside your delegated access.`
     : "Use the repository instructions and any relevant skill content supplied in your delegated context.";

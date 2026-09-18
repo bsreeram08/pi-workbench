@@ -24,12 +24,16 @@ export interface WorkflowReviewAttempt {
   error?: string;
 }
 
+export type WorkflowSurface = "visual";
+
 export interface WorkflowDesignBrief {
   direction: string;
   hierarchy: string;
   interactions: string;
   responsiveAccessibility: string;
   constraints: string;
+  references?: string;
+  refusals?: string;
 }
 
 export interface WorkflowExecutionState {
@@ -59,6 +63,7 @@ export interface WorkflowPlanState {
   execution?: WorkflowExecutionState;
   planningReview?: WorkflowReviewAttempt;
   designBrief?: WorkflowDesignBrief;
+  surface?: WorkflowSurface;
 }
 
 export interface WorkflowPaths {
@@ -172,7 +177,7 @@ function validReviewAttempt(value: unknown): value is WorkflowReviewAttempt {
 
 function validateState(value: unknown, paths: WorkflowPaths): value is WorkflowPlanState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
-    "version", "id", "task", "status", "plan", "interviewNotes", "createdAt", "updatedAt", "reviewRounds", "planPath", "verificationMode", "packet", "execution", "planningReview", "designBrief",
+    "version", "id", "task", "status", "plan", "interviewNotes", "createdAt", "updatedAt", "reviewRounds", "planPath", "verificationMode", "packet", "execution", "planningReview", "designBrief", "surface",
   ])) return false;
   if (value.version !== 1 || typeof value.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value.id) || value.id.includes("..")) return false;
   if (typeof value.task !== "string" || !value.task.trim() || typeof value.plan !== "string" || !value.plan.trim()) return false;
@@ -186,13 +191,8 @@ function validateState(value: unknown, paths: WorkflowPaths): value is WorkflowP
   const packet = value.packet as WorkflowTaskPacket | undefined;
   if (value.execution !== undefined && !validExecution(value.execution, packet)) return false;
   if (value.planningReview !== undefined && !validReviewAttempt(value.planningReview)) return false;
-  if (value.designBrief !== undefined) {
-    const keys = ["direction", "hierarchy", "interactions", "responsiveAccessibility", "constraints"];
-    if (!isRecord(value.designBrief) || !hasOnlyKeys(value.designBrief, keys)
-      || !keys.every((key) => typeof (value.designBrief as Record<string, unknown>)[key] === "string"
-        && ((value.designBrief as Record<string, string>)[key]!).trim().length > 0
-        && ((value.designBrief as Record<string, string>)[key]!).length <= 4000)) return false;
-  }
+  if (value.surface !== undefined && value.surface !== "visual") return false;
+  if (value.designBrief !== undefined && !validDesignBrief(value.designBrief, false)) return false;
 
   const status = value.status as WorkflowPlanStatus;
   const execution = value.execution as WorkflowExecutionState | undefined;
@@ -209,7 +209,40 @@ function validateState(value: unknown, paths: WorkflowPaths): value is WorkflowP
   if (packet === undefined && execution?.packetVerification !== undefined) return false;
   if (packet !== undefined && status === "verified" && (!execution?.packetVerification || !packetVerificationPasses(execution.packetVerification))) return false;
   if (packet !== undefined && execution?.verificationPassed && (!execution.packetVerification || !packetVerificationPasses(execution.packetVerification))) return false;
+  const visual = value.surface === "visual";
+  const requiresTasteLock = visual && (status === "approved" || execution !== undefined);
+  if (requiresTasteLock && !isCompleteVisualDesignBrief(value.designBrief as WorkflowDesignBrief | undefined)) return false;
   return true;
+}
+
+const DESIGN_BRIEF_CORE = ["direction", "hierarchy", "interactions", "responsiveAccessibility", "constraints"] as const;
+const DESIGN_BRIEF_VISUAL = ["references", "refusals"] as const;
+const DESIGN_BRIEF_ALLOWED = new Set<string>([...DESIGN_BRIEF_CORE, ...DESIGN_BRIEF_VISUAL]);
+
+function validDesignBrief(value: unknown, requireVisualFields: boolean): value is WorkflowDesignBrief {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (!keys.every((key) => DESIGN_BRIEF_ALLOWED.has(key))) return false;
+  if (!DESIGN_BRIEF_CORE.every((key) => keys.includes(key))) return false;
+  if (requireVisualFields && !DESIGN_BRIEF_VISUAL.every((key) => keys.includes(key))) return false;
+  return keys.every((key) => {
+    const field = value[key];
+    return typeof field === "string" && field.trim().length > 0 && field.length <= 4000;
+  });
+}
+
+export function isCompleteVisualDesignBrief(
+  brief: WorkflowDesignBrief | undefined,
+): brief is WorkflowDesignBrief & { references: string; refusals: string } {
+  return validDesignBrief(brief, true) && Boolean(brief.references?.trim() && brief.refusals?.trim());
+}
+
+export function requiresVisualEvidence(state: Pick<WorkflowPlanState, "surface" | "designBrief">): boolean {
+  return state.surface === "visual" || state.designBrief !== undefined;
+}
+
+export function requiresHostCapturedVisual(state: Pick<WorkflowPlanState, "surface">): boolean {
+  return state.surface === "visual";
 }
 
 function workflowDirectoryChain(paths: WorkflowPaths, includeStorage: boolean): string[] {
@@ -384,5 +417,6 @@ export function formatWorkflowPlanStatus(state: WorkflowPlanState | undefined): 
   const execution = state.execution
     ? `\n- Execution attempts: ${state.execution.attempts}\n- Verification: ${state.execution.verificationPassed ? "passed" : "not passed"}`
     : "";
-  return `- Plan: **${state.id}**\n- Status: **${state.status}**\n- Task: ${state.task}\n- Plan file: ${state.planPath}\n- Review rounds: ${state.reviewRounds}${execution}`;
+  const surface = state.surface === "visual" ? "\n- Surface: **visual**" : "";
+  return `- Plan: **${state.id}**\n- Status: **${state.status}**\n- Task: ${state.task}\n- Plan file: ${state.planPath}\n- Review rounds: ${state.reviewRounds}${surface}${execution}`;
 }

@@ -196,6 +196,28 @@ test("visual registration returns validated image bytes and separates reports fr
   await expect(store.assertCurrent({ ...context, ids: [receipt.id], requireVisual: true })).rejects.toThrow("stale");
 });
 
+test("host-captured visual evidence is distinct from caller-supplied PNGs", async () => {
+  const root = await fixture();
+  const bytes = png();
+  const store = new InspectionEvidenceStore(async ({ outputPath }) => {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, bytes);
+    return { bytes };
+  });
+  const context = { root, sessionId: "parent", planId: "plan" };
+  const source = await store.inspect({ ...context, paths: ["code.txt"] });
+  const callerDir = await fixture(false);
+  await fs.writeFile(path.join(callerDir, "caller.png"), bytes);
+  const supplied = await store.visual({ ...context, artifactPath: path.join(callerDir, "caller.png"), route: "/", viewport: { width: 1280, height: 800 }, observations: "clicked" });
+  expect(supplied.receipt.provenance).toBe("caller-supplied-image");
+  await expect(store.assertCurrent({ ...context, ids: [source.receipt.id, supplied.receipt.id], requireVisual: true, requireHostCaptured: true })).rejects.toThrow("host-captured");
+  const captured = await store.visual({ ...context, captureUrl: "http://127.0.0.1:4173/", route: "/", viewport: { width: 1280, height: 800 }, observations: "clicked" });
+  expect(captured.receipt.provenance).toBe("host-captured-image");
+  expect((await store.assertCurrent({ ...context, ids: [source.receipt.id, captured.receipt.id], requireVisual: true, requireHostCaptured: true }))[1].kind).toBe("visual");
+  const empty = await store.visual({ ...context, captureUrl: "http://127.0.0.1:4173/", route: "/", viewport: { width: 800, height: 600 } });
+  await expect(store.assertCurrent({ ...context, ids: [source.receipt.id, empty.receipt.id], requireVisual: true, requireHostCaptured: true })).rejects.toThrow("observed interactions");
+});
+
 test("visual evidence rejects corrupt, truncated, symlink and non-image artifacts", async () => {
   const root = await fixture();
   const directory = await fixture(false);

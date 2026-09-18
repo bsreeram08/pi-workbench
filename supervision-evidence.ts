@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { constants } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { workspaceSnapshot } from "./verification.ts";
+import { captureLoopbackPng } from "./visual-capture.ts";
 
 const exec = promisify(execFile);
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -92,8 +93,10 @@ export interface VisualReceipt {
   version: 1; kind: "visual"; id: string; root: string; sessionId: string; planId: string; snapshot: string; createdAt: string;
   artifactPath: string; digest: string; width: number; height: number;
   reported: { route: string; viewport: { width: number; height: number }; observations: string };
-  provenance: "caller-supplied-image";
+  provenance: "caller-supplied-image" | "host-captured-image";
 }
+
+export type VisualCaptureFn = (input: { url: string; viewport: { width: number; height: number }; outputPath: string }) => Promise<{ bytes: Buffer }>;
 export type SupervisionReceipt = InspectionReceipt | VisualReceipt;
 
 function pngDimensions(buffer: Buffer): { width: number; height: number } {
@@ -137,6 +140,7 @@ function pngDimensions(buffer: Buffer): { width: number; height: number } {
  * They do not attest to comprehension or visual/behavioral quality. */
 export class InspectionEvidenceStore {
   private receipts = new Map<string, SupervisionReceipt>();
+  constructor(private readonly capture: VisualCaptureFn = captureLoopbackPng) {}
   clear(): void { this.receipts.clear(); }
 
   /** Only host-retained baselines may be passed here; never accept this argument
@@ -221,37 +225,48 @@ export class InspectionEvidenceStore {
     return { receipt, files };
   }
 
-  async visual(input: { root: string; sessionId: string; planId: string; artifactPath: string; route: string; viewport: { width: number; height: number }; observations?: string }) {
+  async visual(input: { root: string; sessionId: string; planId: string; artifactPath?: string; captureUrl?: string; route: string; viewport: { width: number; height: number }; observations?: string }) {
     if (!input.sessionId || !input.planId || !input.route?.trim() || input.route.length > 2000 || (input.observations?.length ?? 0) > 8000) throw new Error("Visual evidence needs bounded route and session context.");
     if (!input.viewport || ![input.viewport.width, input.viewport.height].every((value) => Number.isInteger(value) && value > 0 && value <= 8192)) throw new Error("Invalid reported viewport.");
     const root = await fs.realpath(input.root);
     const snapshot = await workspaceSnapshot(root);
-    const artifactPath = path.resolve(root, input.artifactPath);
-    // Explicitly supplied artifacts may live in an external capture directory. Never follow the file symlink.
-    const handle = await fs.open(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let artifactPath: string;
     let bytes: Buffer;
-    try {
-      const stat = await handle.stat();
-      if (!stat.isFile() || stat.size < 45 || stat.size > 8 * 1024 * 1024) throw new Error("Visual evidence requires a regular PNG up to 8 MiB.");
-      bytes = Buffer.alloc(stat.size);
-      let offset = 0;
-      while (offset < bytes.length) {
-        const read = await handle.read(bytes, offset, bytes.length - offset, offset);
-        if (!read.bytesRead) throw new Error("Visual evidence changed during reading.");
-        offset += read.bytesRead;
-      }
-      const after = await handle.stat();
-      if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error("Visual evidence changed during reading.");
-    } finally { await handle.close(); }
+    let provenance: VisualReceipt["provenance"];
+    if (input.captureUrl) {
+      artifactPath = input.artifactPath ? path.resolve(input.artifactPath) : path.join(root, ".pi", "pi-workbench", `visual-capture-${randomUUID()}.png`);
+      await fs.mkdir(path.dirname(artifactPath), { recursive: true });
+      ({ bytes } = await this.capture({ url: input.captureUrl, viewport: input.viewport, outputPath: artifactPath }));
+      provenance = "host-captured-image";
+    } else {
+      if (!input.artifactPath) throw new Error("Visual inspection requires a PNG artifact, reported route, and viewport.");
+      artifactPath = path.resolve(root, input.artifactPath);
+      const handle = await fs.open(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size < 45 || stat.size > 8 * 1024 * 1024) throw new Error("Visual evidence requires a regular PNG up to 8 MiB.");
+        bytes = Buffer.alloc(stat.size);
+        let offset = 0;
+        while (offset < bytes.length) {
+          const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+          if (!read.bytesRead) throw new Error("Visual evidence changed during reading.");
+          offset += read.bytesRead;
+        }
+        const after = await handle.stat();
+        if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error("Visual evidence changed during reading.");
+      } finally { await handle.close(); }
+      provenance = "caller-supplied-image";
+    }
+    if (bytes.length < 45 || bytes.length > 8 * 1024 * 1024) throw new Error("Visual evidence requires a regular PNG up to 8 MiB.");
     const dimensions = pngDimensions(bytes);
     if (snapshot !== await workspaceSnapshot(root)) throw new Error("Workspace changed during visual registration.");
-    const receipt: VisualReceipt = { version: 1, kind: "visual", id: randomUUID(), root, sessionId: input.sessionId, planId: input.planId, snapshot, createdAt: new Date().toISOString(), artifactPath, digest: hash(bytes), ...dimensions, reported: { route: input.route, viewport: { ...input.viewport }, observations: input.observations ?? "" }, provenance: "caller-supplied-image" };
+    const receipt: VisualReceipt = { version: 1, kind: "visual", id: randomUUID(), root, sessionId: input.sessionId, planId: input.planId, snapshot, createdAt: new Date().toISOString(), artifactPath, digest: hash(bytes), ...dimensions, reported: { route: input.route, viewport: { ...input.viewport }, observations: input.observations ?? "" }, provenance };
     if (this.receipts.size >= 1000) this.receipts.delete(this.receipts.keys().next().value!);
     this.receipts.set(receipt.id, structuredClone(receipt));
     return { receipt, image: { type: "image" as const, mimeType: "image/png", data: bytes.toString("base64") } };
   }
 
-  async assertCurrent(input: { root: string; sessionId: string; planId: string; ids: string[]; requireVisual?: boolean }): Promise<SupervisionReceipt[]> {
+  async assertCurrent(input: { root: string; sessionId: string; planId: string; ids: string[]; requireVisual?: boolean; requireHostCaptured?: boolean }): Promise<SupervisionReceipt[]> {
     if (!Array.isArray(input.ids) || input.ids.length < 1 || input.ids.length > 100) throw new Error("Native parent inspection evidence IDs are required.");
     const root = await fs.realpath(input.root);
     const snapshot = await workspaceSnapshot(root);
@@ -263,6 +278,11 @@ export class InspectionEvidenceStore {
     });
     if (!receipts.some((receipt) => receipt.kind === "source")) throw new Error("Current source inspection evidence is required.");
     if (input.requireVisual && !receipts.some((receipt) => receipt.kind === "visual")) throw new Error("Current visual evidence is required for this task.");
+    if (input.requireHostCaptured) {
+      const visual = receipts.find((receipt) => receipt.kind === "visual");
+      if (!visual || visual.kind !== "visual" || visual.provenance !== "host-captured-image") throw new Error("Visual plans require host-captured loopback screenshots.");
+      if (!visual.reported.observations.trim()) throw new Error("Visual plans require observed interactions on the captured surface.");
+    }
     return receipts;
   }
 }

@@ -16,6 +16,7 @@ import {
   parseWorkflowTaskPacket,
   packetVerificationPasses,
   validateWorkflowTaskPacket,
+  visualPacketHasRequiredEvidence,
   type WorkflowTaskPacketDeclaration,
 } from "../workflow-task-packet.ts";
 
@@ -135,6 +136,21 @@ describe("workflow task packet declaration codec", () => {
     expect(validateWorkflowTaskPacket({ ...packet, scope: ["changed"] }, plan)).toBe(false);
     expect(validateWorkflowTaskPacket({ ...packet, planDigest: `sha256:${"0".repeat(64)}` }, plan)).toBe(false);
     expect(validateWorkflowTaskPacket({ ...packet, packetId: `wtp-${"0".repeat(32)}` }, plan)).toBe(false);
+  });
+
+  test("visual packets need runtime observation and artifact inspection", () => {
+    expect(visualPacketHasRequiredEvidence(bindWorkflowTaskPacket(planWith()))).toBe(false);
+    const visual = canonicalWorkflowTaskPacketMarker({
+      schemaVersion: 1,
+      scope: ["Render the surface"],
+      nonGoals: ["No unrelated edits"],
+      acceptanceCriteria: [{
+        id: "surface",
+        description: "The page is exercised and captured",
+        requiredEvidenceKinds: ["runtime-observation", "artifact-inspection"],
+      }],
+    });
+    expect(visualPacketHasRequiredEvidence(bindWorkflowTaskPacket(`# Plan\n\n${visual}`))).toBe(true);
   });
 });
 

@@ -17,9 +17,9 @@ import { readReviewContinuity, summarizeReviewContinuity } from "./review-contin
 import { evaluateWorkflowVerification, packetVerificationPasses } from "./workflow-task-packet.ts";
 import { startWorkflowActivity } from "./workflow-activity.ts";
 import { readTaskModelPolicy, resolveTaskModel } from "./task-model-policy.ts";
-import { captureSupervisionInventory, compareSupervisionInventories, InspectionEvidenceStore, type InventoryResult } from "./supervision-evidence.ts";
+import { captureSupervisionInventory, compareSupervisionInventories, InspectionEvidenceStore, type InventoryResult, type VisualCaptureFn } from "./supervision-evidence.ts";
 import {
-  assertWorkflowAuthorityUnchanged, captureWorkflowAuthority, saveWorkflowPlan, writeWorkflowRunArtifact,
+  assertWorkflowAuthorityUnchanged, captureWorkflowAuthority, requiresHostCapturedVisual, requiresVisualEvidence, saveWorkflowPlan, writeWorkflowRunArtifact,
   type WorkflowAuthoritySnapshot, type WorkflowPaths, type WorkflowPlanState,
 } from "./workflow-state.ts";
 
@@ -30,6 +30,7 @@ interface Dependencies {
   implement(project: Project, state: WorkflowPlanState, task: string, model: string, signal: AbortSignal | undefined, ctx: ExtensionContext, continuation?: { runId: string; expectedWorkspaceSnapshot: string }): Promise<AgentResult>;
   verify(project: Project, state: WorkflowPlanState, assessment: string, model: string | undefined, signal: AbortSignal | undefined, ctx: ExtensionContext): Promise<{ reviews: AgentResult[]; verification: AgentResult }>;
   report(title: string, body: string): void;
+  captureVisual?: VisualCaptureFn;
 }
 
 function result(status: string, fields: Record<string, unknown> = {}) {
@@ -48,7 +49,7 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
   const tickets = new Map<string, { authority: WorkflowAuthoritySnapshot; snapshot: string }>();
   let generation = 0;
   let parentSession = randomUUID();
-  const inspections = new InspectionEvidenceStore();
+  const inspections = new InspectionEvidenceStore(deps.captureVisual);
   const baselines = new Map<string, { planId: string; inventory: InventoryResult }>();
   let active = false;
   let activity: ReturnType<typeof startWorkflowActivity> | undefined;
@@ -74,14 +75,15 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
       "Use /start-work to authorize an approved plan first. Main Pi owns sequencing, product decisions, code inspection, and resolution of specialist findings.",
       "For implement, choose an exact model deliberately and honor the user's requested model. Give a bounded task with acceptance criteria. Inspect the actual diff and behavior after each result; do not forward a child summary as your own review.",
       "Record user model preferences once with workbench_model_policy; use the matching domain on later actions. For repair use repair=true. A closed writer checkpoint can continue once with only the new correction; unavailable or stale checkpoints require a fresh bounded assignment.",
-      "Use inspect with relevant source paths. Its evidence IDs establish which content was returned to Main Pi, not comprehension. For an approved design brief also use visual to return a PNG for inspection; distinguish reported interactions from image evidence. Fix stale or wrong captures before changing UI.",
+      "Use inspect with relevant source paths. Its evidence IDs establish which content was returned to Main Pi, not comprehension. For visual plans use visual with captureUrl on a loopback page; caller-supplied PNGs do not satisfy visual plans. Distinguish reported interactions from image evidence. Fix stale or wrong captures before changing UI.",
       "For verify, summarize your own inspection in assessment and cite current evidenceIds from inspect/visual. Native independent review and verification return findings without automatic repair. Resolve blockers and call verify again within the budget.",
       "After reload, inspect the current source again and use recover once to rerun interrupted or passing native verification without replaying a writer. Recovery cannot bypass rejected, cancelled, changed, or exhausted work.",
       "Complete only after independently checking the result yourself. Native completion requires unchanged workspace and passing review/check evidence. Material changes to the approved scope require user agreement, not silent adoption of reviewer proposals.",
     ],
     parameters: Type.Object({
       action: StringEnum(["status", "inspect", "visual", "implement", "verify", "recover", "complete"] as const),
-      artifactPath: Type.Optional(Type.String({ description: "PNG image to return to Main Pi for visual inspection; source provenance remains caller supplied" })),
+      artifactPath: Type.Optional(Type.String({ description: "PNG image to return to Main Pi for visual inspection; caller-supplied unless captureUrl is set" })),
+      captureUrl: Type.Optional(Type.String({ description: "Loopback http(s) URL for host-captured screenshot; required for visual plans" })),
       route: Type.Optional(Type.String({ description: "Reported route and interaction state depicted in the image" })),
       viewport: Type.Optional(Type.Object({ width: Type.Number(), height: Type.Number() })),
       observations: Type.Optional(Type.Array(Type.String({ description: "Reported interaction observations, not facts established by the image" }))),
@@ -130,9 +132,11 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           return result("inspected", inspection);
         }
         if (params.action === "visual") {
-          if (!params.artifactPath || !params.route || !params.viewport) throw new Error("Visual inspection requires a PNG artifact, reported route, and viewport.");
+          if (requiresHostCapturedVisual(state) && !params.captureUrl) throw new Error("Visual plans require captureUrl on a loopback page.");
+          if (!params.route || !params.viewport) throw new Error("Visual inspection requires a reported route and viewport.");
+          if (!params.captureUrl && !params.artifactPath) throw new Error("Visual inspection requires a PNG artifact, reported route, and viewport.");
           const visual = await inspections.visual({ root: workRoot, sessionId: parentSession, planId: state.id,
-            artifactPath: params.artifactPath, route: params.route, viewport: params.viewport, observations: params.observations?.join("\n") });
+            artifactPath: params.artifactPath, captureUrl: params.captureUrl, route: params.route, viewport: params.viewport, observations: params.observations?.join("\n") });
           assertActive();
           await writeWorkflowRunArtifact(project.workflowPaths, state.id, `visual-inspection-${visual.receipt.id}.md`, JSON.stringify(visual.receipt, null, 2));
           return { content: [...result("visual_inspected", { receipt: visual.receipt }).content, visual.image], details: { status: "visual_inspected", receipt: visual.receipt } };
@@ -147,7 +151,7 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           const ticket = tickets.get(workRoot);
           if (!ticket || ticket.authority.content !== authority.content) throw new Error("Passing native review and verification of the current state are required.");
           if (await workspaceSnapshot(workRoot) !== ticket.snapshot) throw new Error("Workspace changed since review; verify again before completion.");
-          await inspections.assertCurrent({ root: workRoot, sessionId: parentSession, planId: state.id, ids: params.evidenceIds ?? [], requireVisual: Boolean(state.designBrief) });
+          await inspections.assertCurrent({ root: workRoot, sessionId: parentSession, planId: state.id, ids: params.evidenceIds ?? [], requireVisual: requiresVisualEvidence(state), requireHostCaptured: requiresHostCapturedVisual(state) });
           assertActive();
           await assertWorkflowAuthorityUnchanged(project.workflowPaths, ticket.authority);
           state.status = "verified";
@@ -218,7 +222,7 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
           return result("implementation_returned", { handoff, artifact });
         }
         if (params.action !== "verify" && params.action !== "recover") throw new Error("Unknown execution action.");
-        const parentEvidence = await inspections.assertCurrent({ root: workRoot, sessionId: parentSession, planId: state.id, ids: params.evidenceIds ?? [], requireVisual: Boolean(state.designBrief) });
+        const parentEvidence = await inspections.assertCurrent({ root: workRoot, sessionId: parentSession, planId: state.id, ids: params.evidenceIds ?? [], requireVisual: requiresVisualEvidence(state), requireHostCaptured: requiresHostCapturedVisual(state) });
         const digest = createHash("sha256").update(JSON.stringify({ plan: state.plan, designBrief: state.designBrief })).digest("hex");
         const before = await workspaceSnapshot(workRoot);
         const priorReview = execution.review;
@@ -338,7 +342,7 @@ export function registerCoordinatorExecution(pi: ExtensionAPI, deps: Dependencie
       });
       active = true;
       stop(); activity = startWorkflowActivity(ctx, "Coordinator: preparing implementation");
-      pi.sendUserMessage(`You are Main Pi, responsible for executing this approved plan. Own the decisions and inspect the work yourself throughout.\nPlan ID: ${authority.state.id}\nTask: ${authority.state.task}\nApproved plan:\n${authority.state.plan}\nAdditional user directions: ${instructions || "Use the conversation's current instructions, including explicit model preferences."}\n\nExplain your first implementation slice and model choice. Call workbench_execute implement with a bounded task and an explicit model=provider/model[:thinking]; honor a model the user asked for, and do not invent one. If isolation is needed, keep it in ./.worktrees/<name> inside this project and add .worktrees/ to .gitignore. If the approved work lives in another Git checkout, pass root as that checkout's toplevel on implement, inspect, verify, and complete so children spawn there. Never tell the user to cd elsewhere and start a second Pi. After each child returns, inspect actual files, diffs, and behavior yourself before choosing the next step. Use workbench_execute inspect with relevant source paths to receive native evidence IDs; ordinary prose is not an inspection receipt. If this plan has a designBrief, use visual to return a PNG and record the reported route, viewport and observed interactions. A supplied image does not prove a fresh browser capture or keyboard behavior. Record the user's scoped model choices with workbench_model_policy, then pass domain on related actions; use repair=true for corrections. A returned continuation checkpoint permits one closed-writer continuation with the new correction only, up to three turns, while the workspace/model/task match. You may use read-only specialists for advice. Use native implementation actions for writers so leases apply. Do not disappear into an automatic pipeline or simply repeat child summaries.\n\nReviewer recommendations are advice: adopt compatible improvements deliberately and obtain user agreement for material departures from the approved scope. When ready, call workbench_execute verify with your own assessment, current evidenceIds and optional reviewer model. It runs independent code review plus native verification and returns findings to you. Resolve blockers with bounded implement calls, then verify again within the limit. After passing gates, inspect the evidence and call complete with your final assessment and current evidenceIds. If reload lost a passing ticket, inspect again and use recover for one fresh read-only verification; never replay implementation to regain authority. Do not mark workflow JSON directly, claim success from a child summary, or restart to evade limits.`, { deliverAs: "followUp", expandPromptTemplates: false });
+      pi.sendUserMessage(`You are Main Pi, responsible for executing this approved plan. Own the decisions and inspect the work yourself throughout.\nPlan ID: ${authority.state.id}\nTask: ${authority.state.task}\nApproved plan:\n${authority.state.plan}\nAdditional user directions: ${instructions || "Use the conversation's current instructions, including explicit model preferences."}\n\nExplain your first implementation slice and model choice. Call workbench_execute implement with a bounded task and an explicit model=provider/model[:thinking]; honor a model the user asked for, and do not invent one. If isolation is needed, keep it in ./.worktrees/<name> inside this project and add .worktrees/ to .gitignore. If the approved work lives in another Git checkout, pass root as that checkout's toplevel on implement, inspect, verify, and complete so children spawn there. Never tell the user to cd elsewhere and start a second Pi. After each child returns, inspect actual files, diffs, and behavior yourself before choosing the next step. Use workbench_execute inspect with relevant source paths to receive native evidence IDs; ordinary prose is not an inspection receipt. ${authority.state.surface === "visual" ? "This is a visual plan. After implementation, call visual with captureUrl on the local dev server (loopback only), viewport, route, and observed interactions. Caller-supplied PNGs cannot complete this plan. A passing test is not visual completion. Inspect the returned image." : "If this plan has a designBrief, use visual to return a PNG and record the reported route, viewport and observed interactions. A supplied image does not prove a fresh browser capture or keyboard behavior."} Record the user's scoped model choices with workbench_model_policy, then pass domain on related actions; use repair=true for corrections. A returned continuation checkpoint permits one closed-writer continuation with the new correction only, up to three turns, while the workspace/model/task match. You may use read-only specialists for advice. Use native implementation actions for writers so leases apply. Do not disappear into an automatic pipeline or simply repeat child summaries.\n\nReviewer recommendations are advice: adopt compatible improvements deliberately and obtain user agreement for material departures from the approved scope. When ready, call workbench_execute verify with your own assessment, current evidenceIds and optional reviewer model. It runs independent code review plus native verification and returns findings to you. Resolve blockers with bounded implement calls, then verify again within the limit. After passing gates, inspect the evidence and call complete with your final assessment and current evidenceIds. If reload lost a passing ticket, inspect again and use recover for one fresh read-only verification; never replay implementation to regain authority. Do not mark workflow JSON directly, claim success from a child summary, or restart to evade limits.`, { deliverAs: "followUp", expandPromptTemplates: false });
       deps.report("Coordinator execution started", "Main Pi owns implementation decisions, inspection, and review follow-up. Native tools retain writer ownership and verification gates.");
     } catch (error) { active = false; stop(); deps.report("Coordinator execution unavailable", error instanceof Error ? error.message : String(error)); }
   };

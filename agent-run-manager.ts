@@ -43,6 +43,7 @@ export interface AgentRunContext {
   budget?: { turns: number; tools: number };
   allowParentQuestions?: boolean;
   contextTask?: string;
+  surface?: "visual";
 }
 
 export interface AgentRunRequest {
@@ -437,6 +438,7 @@ export class AgentRunManager {
     const context = await buildAgentContext({
       projectRoot, role: request.agent.id, task: request.runContext?.contextTask ?? request.task,
       agentDir: this.environment.PI_CODING_AGENT_DIR ?? getAgentDir(), home: this.environment.HOME ?? os.homedir(),
+      surface: request.runContext?.surface,
     });
     const systemPrompt = `${request.systemPrompt}\n\n${context}`;
     await this.store.writeSystemPrompt(paths, systemPrompt);

@@ -237,6 +237,47 @@ test("changed design brief cannot spend recovery allowance as an unreviewed desi
   } finally { await item.cleanup(); }
 });
 
+test("visual flag stores surface and strips it from the task", async () => {
+  const item = await setup();
+  try {
+    await item.start("--visual Build a landing page");
+    const state = (await item.state())!;
+    expect(state.surface).toBe("visual");
+    expect(state.task).toBe("Build a landing page");
+  } finally { await item.cleanup(); }
+});
+
+test("visual review requires a complete taste lock and surface evidence kinds", async () => {
+  const item = await setup();
+  const visualBrief = {
+    direction: "Paper and teal", hierarchy: "Identity before journey", interactions: "Keyboard route controls",
+    responsiveAccessibility: "Reduced motion and mobile layout", constraints: "Only source facts",
+    references: "Editorial newspaper layouts", refusals: "No Inter, no purple gradient SaaS",
+  };
+  const visualPlan = `# Plan\n\nBuild the approved behavior.\n\n${canonicalWorkflowTaskPacketMarker({
+    schemaVersion: 1, scope: ["Build the behavior"], nonGoals: ["No unrelated edits"],
+    acceptanceCriteria: [{ id: "surface", description: "Rendered surface matches the lock", requiredEvidenceKinds: ["runtime-observation", "artifact-inspection"] }],
+  })}`;
+  try {
+    await item.start("--visual Build a landing page");
+    const id = (await item.state())!.id;
+    const run = (action: string, extra: object = {}) => item.run(action, extra);
+    await expect(run("review", { plan, planId: id })).rejects.toThrow("references and refusals");
+    await expect(run("review", { plan, planId: id, designBrief: visualBrief })).rejects.toThrow("runtime-observation");
+    expect((await run("review", { plan: visualPlan, planId: id, designBrief: visualBrief })).details.status).toBe("review_passed");
+    expect((await item.state())!.designBrief).toEqual(visualBrief);
+  } finally { await item.cleanup(); }
+});
+
+test("UI-looking tasks nudge into the visual loop when confirmed", async () => {
+  const item = await setup();
+  try {
+    await item.start("Improve the modal animation");
+    expect((await item.state())!.surface).toBe("visual");
+    expect((await item.state())!.task).toBe("Improve the modal animation");
+  } finally { await item.cleanup(); }
+});
+
 test("declined approval stays cancelled across reload and requires an explicit new revision", async () => {
   const item = await setup();
   try {

@@ -13,6 +13,19 @@ import { canonicalWorkflowFindingsMarker } from "../workflow-findings.ts";
 
 const PASSING_CODE_REVIEW = `${canonicalWorkflowFindingsMarker({ schemaVersion: 1, findings: [] })}\n<code-verdict>PASS</code-verdict>`;
 
+function pngBytes() {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    let crc = 0xffffffff;
+    for (const byte of body) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
+    const size = Buffer.alloc(4), checksum = Buffer.alloc(4);
+    size.writeUInt32BE(data.length); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([size, body, checksum]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(1, 0); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 6;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(Buffer.from([0, 255, 0, 0, 255]))), chunk("IEND", Buffer.alloc(0))]);
+}
+
 function changesRequiredReview(source = "original source"): string {
   const evidenceDigest = `sha256:${createHash("sha256").update(source.split("\n").slice(0, 1).join("\n"), "utf8").digest("hex")}`;
   return `${canonicalWorkflowFindingsMarker({
@@ -59,6 +72,12 @@ async function setup(verification: (call: number) => void | string | Promise<voi
       return { reviews: [{ agentId: "technical-reviewer", title: "Review", exitCode: 0, output: verdict ?? PASSING_CODE_REVIEW }], verification: { agentId: "verifier", title: "Verification", exitCode: 0, output: "<verified/>", verification: { receipts: [check.receipt], snapshot: await workspaceSnapshot(root) } } };
     },
     report() {},
+    captureVisual: async ({ outputPath }) => {
+      const bytes = pngBytes();
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, bytes);
+      return { bytes };
+    },
   });
   const run = (action: string, extra: object = {}, signal?: AbortSignal) => tools.get("workbench_execute").execute("test", { action, planId: id, assessment: "Inspected the current code and native check evidence", ...extra }, signal, undefined, ctx);
   return { root, id, workflowPaths, run, implementations,
@@ -186,6 +205,26 @@ test("design brief requires both native source and visual evidence before review
     expect(visual.details.receipt.provenance).toBe("caller-supplied-image");
     await expect(item.run("verify", { evidenceIds: [visual.details.receipt.id] })).rejects.toThrow("source inspection");
     expect(item.calls()).toBe(0);
+    expect((await item.run("verify", { evidenceIds: [...evidenceIds, visual.details.receipt.id] })).details.status).toBe("verification_passed");
+  } finally { await item.cleanup(); }
+});
+
+test("visual surface requires host-captured loopback evidence, not a caller PNG", async () => {
+  const item = await setup();
+  try {
+    const state = (await item.state())!;
+    state.surface = "visual";
+    state.designBrief = {
+      direction: "Paper and ink", hierarchy: "Identity first", interactions: "Keyboard controls",
+      responsiveAccessibility: "Reduced motion", constraints: "JSON facts only",
+      references: "Editorial newspaper layouts, not dashboards", refusals: "No Inter, no purple gradients, no shadcn cards",
+    };
+    await saveWorkflowPlan(item.workflowPaths, state);
+    const evidenceIds = await item.inspect();
+    await expect(item.run("verify", { evidenceIds })).rejects.toThrow("visual evidence");
+    await expect(item.run("visual", { artifactPath: path.join(item.root, "code.txt"), route: "/", viewport: { width: 390, height: 844 } })).rejects.toThrow("captureUrl");
+    const visual = await item.run("visual", { captureUrl: "http://127.0.0.1:4173/", route: "/", viewport: { width: 1280, height: 800 }, observations: ["Clicked the primary control"] });
+    expect(visual.details.receipt.provenance).toBe("host-captured-image");
     expect((await item.run("verify", { evidenceIds: [...evidenceIds, visual.details.receipt.id] })).details.status).toBe("verification_passed");
   } finally { await item.cleanup(); }
 });
