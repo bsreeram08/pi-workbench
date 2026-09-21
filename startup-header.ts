@@ -25,7 +25,7 @@ export default function (pi: ExtensionAPI) {
         return [
           "",
           ...art,
-          theme.fg("muted", `${summary}`) + theme.fg("dim", ` · pi v${VERSION}`),
+          theme.fg("muted", `${summary}`) + theme.fg("dim", ` · /help · pi v${VERSION}`),
           "",
         ].map((line) => truncateToWidth(line, width));
       },

@@ -297,7 +297,7 @@ export function registerCoordinatorPlanning(pi: ExtensionAPI, deps: Dependencies
     },
   });
 
-  return async function start(request: string, ctx: ExtensionCommandContext): Promise<void> {
+  return async function start(request: string, ctx: ExtensionCommandContext, options: { visual?: boolean } = {}): Promise<void> {
     const trust = guardSubagentLaunch(ctx);
     if (trust) { deps.report("Project trust required", trust); return; }
     if (!ctx.hasUI) { deps.report("Planner unavailable", "/plan requires interactive UI."); return; }
@@ -312,8 +312,8 @@ export function registerCoordinatorPlanning(pi: ExtensionAPI, deps: Dependencies
     const feedback = parsed.feedback;
     const timestamp = new Date().toISOString();
     const task = previous?.task ?? taskText;
-    let visual = parsed.visual || previous?.surface === "visual";
-    if (!visual && !parsed.revise && looksLikeVisualTask(task)) {
+    let visual = options.visual || parsed.visual || previous?.surface === "visual";
+    if (!visual && !options.visual && !parsed.revise && looksLikeVisualTask(task)) {
       visual = await ctx.ui.confirm("This looks like visual/UI work. Use the visual loop (taste lock + browser capture)?", task);
     }
     const state: WorkflowPlanState = {

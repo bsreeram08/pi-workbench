@@ -69,6 +69,7 @@ import { registerAutomode } from "./automode.ts";
 import { registerSpawnPolicy } from "./spawn-policy.ts";
 import { registerChildHandoff } from "./child-handoff.ts";
 import { registerWorkbenchUpdate } from "./workbench-update.ts";
+import { registerWorkbenchHelp } from "./workbench-help.ts";
 import { guardSubagentLaunch } from "./project-trust.ts";
 import type { AgentResult, AgentSpec, CouncilSession, Exec } from "./types.ts";
 import { canDelegateSpecialists, SupervisorClient, type SupervisorDecision } from "./supervisor.ts";
@@ -1058,4 +1059,6 @@ export default function piWorkbench(pi: ExtensionAPI) {
       };
     },
   });
+
+  registerWorkbenchHelp(pi, (title, body) => report(pi, title, body));
 }

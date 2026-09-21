@@ -641,7 +641,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         state.updatedAt = now();
         await saveWorkflowPlan(workflowPaths, state);
         progress.finish("blocked", "Visual plan is missing a taste lock");
-        report("Workflow plan blocked", `Visual plans need a complete design brief including references and refusals before approval. Use \`/plan --visual\` so Main Pi can lock taste with you.\n\nDraft: ${state.planPath}`);
+        report("Workflow plan blocked", `Visual plans need a complete design brief including references and refusals before approval. Use \`/plan-ui\` so Main Pi can lock taste with you.\n\nDraft: ${state.planPath}`);
         return { state, cancelled: false, executable: false };
       }
       state.status = "approved";
@@ -892,9 +892,9 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     return parts.join("/").replace(/\/+/g, "/");
   }
 
-  async function runPlanningCommand(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
+  async function runPlanningCommand(rawArgs: string, ctx: ExtensionCommandContext, options: { visual?: boolean } = {}): Promise<void> {
     const parsed = parsePlanRequest(rawArgs);
-    if (!parsed.pipeline) return startCoordinatorPlanning(rawArgs, ctx);
+    if (!parsed.pipeline) return startCoordinatorPlanning(rawArgs, ctx, options);
     const trustRequired = guardSubagentLaunch(ctx);
     if (trustRequired) {
       report("Project trust required", trustRequired);
@@ -915,7 +915,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     }
     const task = previous?.task ?? request;
     const revision = previous ? { previous, feedback: parsed.feedback } : undefined;
-    const surface = parsed.visual || previous?.surface === "visual" ? "visual" as const : undefined;
+    const surface = options.visual || parsed.visual || previous?.surface === "visual" ? "visual" as const : undefined;
     const confirmed = await ctx.ui.confirm(
       revision ? "Revise the current workflow plan?" : "Start high-accuracy Workflow planning?",
       `${revision ? `Carry forward task: ${task}\nPrevious plan: ${previous!.id}\n\n` : ""}Pi will use the ${project.config.workflowMode} workflow: discovery, a bounded Planner interview, planning, and up to ${project.config.workflowMaxPlanReviewLoops} independent review rounds. No source files will be changed.`,
@@ -1027,7 +1027,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
     }
   }
 
-  async function runAutopilotCommand(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
+  async function runAutopilotCommand(rawArgs: string, ctx: ExtensionCommandContext, options: { visual?: boolean } = {}): Promise<void> {
     const trustRequired = guardSubagentLaunch(ctx);
     if (trustRequired) {
       report("Project trust required", trustRequired);
@@ -1055,7 +1055,7 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
         dashboard.beginRun(`workflow-autopilot-${Date.now()}`, runController);
         const progress = progressFor(pi, ctx, "Autopilot", task, "autopilot");
         try {
-          const planning = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: true, autoApprove: true, ...(parsed.visual ? { surface: "visual" as const } : {}) }, runController.signal);
+          const planning = await createPlan(project.root, project.paths, project.config, task, ctx, progress, { autonomous: true, autoApprove: true, ...((options.visual || parsed.visual) ? { surface: "visual" as const } : {}) }, runController.signal);
           throwIfWorkflowCancelled(runController.signal);
           if (!planning.state || !planning.executable) {
             progress.finish(planning.cancelled ? "cancelled" : "needs_attention", planning.cancelled ? "Planning cancelled" : "Planning did not produce an executable plan");
@@ -1363,8 +1363,13 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   });
 
   pi.registerCommand("plan", {
-    description: "Main Pi directs planning with native review tools; --visual for UI, --revise keeps the draft, --pipeline uses automatic stages",
+    description: "Main Pi directs planning with native review tools; --revise keeps the draft, --pipeline uses automatic stages",
     handler: runPlanningCommand,
+  });
+
+  pi.registerCommand("plan-ui", {
+    description: "Plan UI work (taste lock + host capture): /plan-ui <task>",
+    handler: (args, ctx) => runPlanningCommand(args, ctx, { visual: true }),
   });
 
   pi.registerCommand("start-work", {
@@ -1422,5 +1427,10 @@ export function registerWorkflow(pi: ExtensionAPI, dependencies: WorkflowDepende
   pi.registerCommand("autopilot", {
     description: "Autonomously plan, implement, review, fix, and verify a complex task",
     handler: runAutopilotCommand,
+  });
+
+  pi.registerCommand("autopilot-ui", {
+    description: "Autopilot for UI work (taste lock + host capture): /autopilot-ui <task>",
+    handler: (args, ctx) => runAutopilotCommand(args, ctx, { visual: true }),
   });
 }
