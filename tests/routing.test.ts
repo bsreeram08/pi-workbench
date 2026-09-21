@@ -103,16 +103,20 @@ describe("adaptive model routing", () => {
       model: "openai-codex/custom-model:high",
       thinking: "high",
     });
-    expect(parseFixedRoutingModel("xai/grok-4.6")).toEqual({
-      model: "xai/grok-4.6:medium",
+    expect(parseFixedRoutingModel("xai/grok-4.7")).toEqual({
+      model: "xai/grok-4.7:medium",
       thinking: "medium",
     });
-    expect(parseFixedRoutingModel("xai/grok-4.6:high")).toEqual(GROK_PRIMARY_ROUTE);
+    expect(parseFixedRoutingModel("xai/grok-4.7:high")).toEqual(GROK_PRIMARY_ROUTE);
+    expect(parseFixedRoutingModel("xai/grok-4.6:high")).toEqual({
+      model: "xai/grok-4.6:high",
+      thinking: "high",
+    });
     expect(parseFixedRoutingModel("provider/custom-model:high")).toBeUndefined();
     expect(parseFixedRoutingModel("openai-codex/bad model")).toBeUndefined();
   });
 
-  test("routes the Grok 4.6 family by thinking level without changing Codex defaults", () => {
+  test("routes the Grok 4.7 family by thinking level without changing Codex defaults", () => {
     const request = { task: "Review the bounded change and run tests.", effort: "standard" as const };
     expect(routeTask(request).model).toBe("openai-codex/gpt-5.6-terra:medium");
     expect(routeTask({ ...request, policy: { policy: "balanced", family: "grok" } }).model).toBe(GROK_BALANCED_ROUTES.standard.model);
@@ -133,13 +137,13 @@ describe("adaptive model routing", () => {
 
   test("maps family and fixed routes onto the Main Pi parent", () => {
     expect(parentRouteForState({ policy: "balanced", family: "grok" })).toEqual({
-      provider: "xai", id: "grok-4.6", thinking: "high",
+      provider: "xai", id: "grok-4.7", thinking: "high",
     });
     expect(parentRouteForState({ policy: "economy" })).toEqual({
       provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high",
     });
     expect(parentRouteForState({ policy: "fixed", fixed: GROK_PRIMARY_ROUTE })).toEqual({
-      provider: "xai", id: "grok-4.6", thinking: "high",
+      provider: "xai", id: "grok-4.7", thinking: "high",
     });
     expect(parentRouteForState({ policy: "fixed", fixed: BALANCED_ROUTES.heavy })).toEqual({
       provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high",
@@ -183,7 +187,7 @@ describe("session routing controls", () => {
     })).toEqual({ policy: "balanced", family: "grok" });
     expect(restoreModelRoutingState({
       version: 1,
-      state: { policy: "fixed", fixed: { model: "xai/grok-4.6:high", thinking: "high" } },
+      state: { policy: "fixed", fixed: { model: "xai/grok-4.7:high", thinking: "high" } },
     })).toEqual({ policy: "fixed", fixed: GROK_PRIMARY_ROUTE });
     expect(restoreModelRoutingState({ version: 1, state: { policy: "fixed", fixed: { model: "provider/custom:high", thinking: "high" } } })).toEqual({ policy: "balanced" });
     expect(restoreModelRoutingState({ version: 1, state: { policy: "fixed", fixed: { model: "openai-codex/custom", thinking: "medium" } } })).toEqual({ policy: "balanced" });
@@ -220,7 +224,7 @@ describe("session routing controls", () => {
       sessionManager: { getBranch: () => [] },
       modelRegistry: {
         find(provider: string, model: string) {
-          if (provider === "xai" && model === "grok-4.6") return { provider, id: model };
+          if (provider === "xai" && (model === "grok-4.7" || model === "grok-4.6")) return { provider, id: model };
           return provider === "openai-codex" && [
             "gpt-5.3-codex-spark",
             "gpt-5.6-luna",
@@ -244,11 +248,11 @@ describe("session routing controls", () => {
     expect(entries.filter((entry) => entry.customType === MODEL_ROUTING_ENTRY)).toHaveLength(4);
     expect(entries.filter((entry) => entry.customType === MODEL_ROUTING_RECEIPT_ENTRY)).toHaveLength(1);
     expect(parentModels).toEqual([
-      "xai/grok-4.6",
+      "xai/grok-4.7",
       "openai-codex/gpt-5.6-sol",
       "openai-codex/gpt-5.6-terra",
-      "xai/grok-4.6",
-      "xai/grok-4.6",
+      "xai/grok-4.7",
+      "xai/grok-4.7",
     ]);
     expect(parentThinking).toEqual(["high", "high", "medium", "high", "high"]);
     const input: Record<string, unknown> = { agent: "scout", task: "Inspect the API." };
@@ -352,7 +356,7 @@ describe("durable family defaults and customize menu", () => {
     expect(parseModelRoutingCommand("codex --default")).toEqual({ kind: "family", family: "codex", makeDefault: true });
     expect(parseModelRoutingCommand("quality --default")).toEqual({ kind: "policy", policy: "quality", makeDefault: true });
     expect(parseModelRoutingCommand("fixed grok --default").kind).toBe("usage");
-    expect(parseRoutingMenuFamily("Grok 4.6 (low/medium/high)")).toBe("grok");
+    expect(parseRoutingMenuFamily("Grok 4.7 (low/medium/high)")).toBe("grok");
     expect(parseRoutingMenuPolicy("Balanced")).toBe("balanced");
     expect(parseRoutingMenuScope("Save as project default")).toBe(true);
     expect(parseRoutingMenuScope("This session only")).toBe(false);
@@ -460,10 +464,10 @@ describe("durable family defaults and customize menu", () => {
     expect(controller.getState()).toEqual({ policy: "economy" });
   });
 
-  test("interactive menu can save Grok 4.6 as the project default", async () => {
+  test("interactive menu can save Grok 4.7 as the project default", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-workbench-routing-menu-"));
     const answers = [
-      "Grok 4.6 (low/medium/high)",
+      "Grok 4.7 (low/medium/high)",
       "Balanced",
       "Save as project default",
     ];

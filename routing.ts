@@ -57,14 +57,16 @@ export const BALANCED_ROUTES: Record<ResolvedRoutingEffort, FixedModelRoute> = {
   heavy: { model: "openai-codex/gpt-5.6-sol:high", thinking: "high" },
 };
 
+export const GROK_MODEL_ID = "grok-4.7";
+
 export const GROK_PRIMARY_ROUTE: FixedModelRoute = {
-  model: "xai/grok-4.6:high",
+  model: `xai/${GROK_MODEL_ID}:high`,
   thinking: "high",
 };
 
 export const GROK_BALANCED_ROUTES: Record<ResolvedRoutingEffort, FixedModelRoute> = {
-  light: { model: "xai/grok-4.6:low", thinking: "low" },
-  standard: { model: "xai/grok-4.6:medium", thinking: "medium" },
+  light: { model: `xai/${GROK_MODEL_ID}:low`, thinking: "low" },
+  standard: { model: `xai/${GROK_MODEL_ID}:medium`, thinking: "medium" },
   heavy: GROK_PRIMARY_ROUTE,
 };
 
@@ -189,7 +191,7 @@ export function parentRouteForState(state: ModelRoutingState): ParentModelRoute 
     }
   }
   return routingFamily(state) === "grok"
-    ? { provider: "xai", id: "grok-4.6", thinking: "high" }
+    ? { provider: "xai", id: GROK_MODEL_ID, thinking: "high" }
     : { provider: "openai-codex", id: "gpt-5.6-sol", thinking: "high" };
 }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Grok family and the installer default are `xai/grok-4.7` at high thinking. Children still use low/medium/high on that model. `xai/grok-4.6` remains a valid explicit pin.
 - `/plan --visual` (alias `--ui`) is a plan-scoped visual loop: required taste lock (`references`, `refusals`), packet `runtime-observation` and `artifact-inspection`, inverted style review, and host-captured loopback screenshots. Caller-supplied PNGs cannot complete visual plans. Interactive `/plan` asks before entering that loop when the task looks like UI work.
 - Specialist handoff is host-owned: later Main Pi turns keep a run-id pointer instead of the full dump, `fromRuns` injects stored prior results into a later child, unknown run ids fail closed, and parent-facing failures are curated. Stored final text remains on the run. Reload a dump with `workbench_agent_status` `output=true`.
 - `/spawn` is a user-owned specialist policy: durable `always|ask|never|auto`, `fanout 1-6`, and `/spawn this …` for the current session. `never` blocks `delegate_task` and `workbench_agent_start`; explicit `/delegate`, `/plan`, and `/start-work` still run. Default remains `auto`.

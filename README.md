@@ -25,7 +25,7 @@ Do not `pi install npm:pi-workbench`. Use the recursive Git installation below; 
 | Verification | `workbench_verify` | Recorded commands, exit status, output artifacts, and code fingerprints |
 | Research | `/research` | Cited evidence ledger, not search-snippet authority |
 | Prompt editing | `/improve-prompt`, `/enhance-prompt`, `/reprompt` | Coordinator-written draft, labeled assumptions, explicit editor insertion |
-| Routing | `/model-routing` | Per-lane Codex or Grok 4.6 family for Main Pi and children |
+| Routing | `/model-routing` | Per-lane Codex or Grok 4.7 family for Main Pi and children |
 
 Replaced companions: `pi-subagents`, `@capyup/pi-goal`, `@juicesharp/rpiv-todo`, `@juicesharp/rpiv-ask-user-question`. Do not enroll them. Use the first-party tools above.
 
@@ -71,7 +71,7 @@ Default install links Workbench, the cmux companion, the framed editor, and the 
 
 Runtime installation does not need checkout development dependencies, even if Bun or TypeScript is installed globally. Development checks run only with `--strict`. Before reporting success, the installer verifies that Pi discovers `/enhance`, `/improveprompt`, and the workflow commands from the installed user profile.
 
-Opinionated profile (Grok 4.6/high, Ember, compact startup header, preference baseline, allowlisted skill evolution):
+Opinionated profile (Grok 4.7/high, Ember, compact startup header, preference baseline, allowlisted skill evolution):
 
 ```bash
 ./install.sh --full
@@ -194,7 +194,7 @@ An animated activity row above the editor shows the current workflow phase and e
 
 ## Model routing
 
-Shipped default is Grok 4.6: Main Pi is `xai/grok-4.6` at high thinking; children use low/medium/high by lane. `/model-routing grok` or `/model-routing codex` moves **Main Pi and children** together. `--default` writes the project family so new sessions in that git root follow. Codex family uses Luna/low, Terra/medium, Sol/high for children and Sol/high for Main Pi.
+Shipped default is Grok 4.7: Main Pi is `xai/grok-4.7` at high thinking; children use low/medium/high by lane. `/model-routing grok` or `/model-routing codex` moves **Main Pi and children** together. `--default` writes the project family so new sessions in that git root follow. Codex family uses Luna/low, Terra/medium, Sol/high for children and Sol/high for Main Pi. Pin `xai/grok-4.6` only when you ask for that exact model.
 
 For a specific child, Main Pi can set `model: "provider/model[:thinking]"` on `delegate_task`, `workbench_agent_start`, or `workbench_plan` review when the user asked for that exact model. This overrides routing for that call only. Parallel delegation takes a model on each `tasks[]` entry. An unavailable model fails before launch without substitution; `effort` still controls the task budget separately. For related native Coordinator actions, record `workbench_model_policy` once and pass the matching domain.
 
