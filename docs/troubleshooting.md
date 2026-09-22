@@ -56,7 +56,9 @@ That is expected after the current synthesis turn. The host keeps a `runId` poin
 
 For an untrusted project, run `/trust` and restart Pi before launching children. Reloading an extension is separate from restarting after a new project-trust decision.
 
-`/model-routing grok` or `codex` moves Main Pi and children together. Adaptive lanes still differ: Main Pi stays at the family parent (Grok 4.6 high or Sol high) while a light child can be Grok low or Luna. Inspect `/model-routing` for the family and policy. See [Model routing](../README.md#model-routing).
+`/model-routing grok` or `codex` moves Main Pi and children together. Adaptive lanes still differ: Main Pi stays at the family parent (Grok 4.7 high or Sol high) while a light child can be Grok low or Luna. Inspect `/model-routing` for the family and policy. See [Model routing](../README.md#model-routing).
+
+If Pi says `xai/grok-4.7` is not in the registry and Main Pi stays on the previous model, reload Pi. Workbench adds that model to `models.json` in the Pi agent directory and reloads the xAI provider without removing other models or writing an API key. A symlink or invalid `models.json` is left unchanged; fix that file, then reload. `/login` is still required when the provider has no credential.
 
 If you explicitly requested a model for a particular task, Main Pi should pass that exact `model: "provider/model[:thinking]"` on the delegation or native review call. `workbench_execute` requires an explicit model or matching task preference for implementation. Use `workbench_model_policy` to record the requested domain and actions once, then pass that domain on related calls. An unavailable exact model fails without substitution. A standalone override does not change later calls; a recorded task preference does. Conflicting model choices fail until Main Pi explicitly records the user's replacement direction. Isolated work belongs in `./.worktrees/<name>` inside the project; native inspect cannot follow a tree outside that checkout.
 

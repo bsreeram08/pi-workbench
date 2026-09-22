@@ -124,7 +124,7 @@ describe("public installer configuration safety", () => {
     expect(settings).toEqual({
       theme: "ember",
       defaultProvider: "xai",
-      defaultModel: "grok-4.6",
+      defaultModel: "grok-4.7",
       defaultThinkingLevel: "high",
       quietStartup: true,
       customSetting: true,

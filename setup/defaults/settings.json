@@ -1,6 +1,6 @@
 {
   "defaultProvider": "xai",
-  "defaultModel": "grok-4.6",
+  "defaultModel": "grok-4.7",
   "defaultThinkingLevel": "high",
   "theme": "ember",
   "quietStartup": true
