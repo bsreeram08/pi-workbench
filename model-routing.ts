@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
   BALANCED_ROUTES,
@@ -16,6 +16,7 @@ import {
   type RoutingFamily,
   type SessionRoutingDirective,
 } from "./routing.ts";
+import { mergeGrok47Model } from "./grok-catalog.ts";
 import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { findProjectRootSync } from "./project.ts";
 
@@ -268,6 +269,7 @@ function nativeRoutingGuidance(state: ModelRoutingState): string {
 export function registerModelRouting(
   pi: ExtensionAPI,
   report?: (title: string, body: string) => void,
+  options?: { modelsPath?: string },
 ): ModelRoutingController {
   let state: ModelRoutingState = { policy: "balanced", family: "grok" };
   let durableDefaults: DurableRoutingDefaults = { policy: "balanced", family: "grok" };
@@ -292,20 +294,49 @@ export function registerModelRouting(
     updateStatus(ctx);
   };
 
+  const modelsJsonPath = (): string => options?.modelsPath ?? path.join(getAgentDir(), "models.json");
+
+  const installGrok47Catalog = async (ctx: ExtensionContext): Promise<string> => {
+    const merged = mergeGrok47Model(modelsJsonPath());
+    if (merged.status === "skipped") return merged.reason;
+    try {
+      await ctx.modelRegistry.refresh({ allowNetwork: false, providers: ["xai"] });
+    } catch {
+      return merged.status === "added"
+        ? "Workbench wrote grok-4.7 into models.json. Restart Pi if this process still does not list it."
+        : "models.json already lists grok-4.7. Restart Pi so this process reloads it.";
+    }
+    return "";
+  };
+
   const applyParentModel = async (ctx: ExtensionContext, next: ModelRoutingState): Promise<void> => {
     const route = parentRouteForState(next);
     const target = `${route.provider}/${route.id}`;
     const warn = (message: string): void => {
       if (ctx.hasUI) ctx.ui.notify(message, "warning");
     };
+    const lookup = (): unknown => ctx.modelRegistry.find(route.provider, route.id);
     let model: unknown;
     try {
-      model = ctx.modelRegistry.find(route.provider, route.id);
+      model = lookup();
     } catch (error) {
       warn(`Could not switch Main Pi to ${target}: ${error instanceof Error ? error.message : String(error)}. Parent is unchanged.`);
       return;
     }
-    if (!model) {
+    if (!model && route.provider === "xai" && route.id === "grok-4.7" && typeof ctx.modelRegistry.refresh === "function") {
+      const catalogNote = await installGrok47Catalog(ctx);
+      try {
+        model = lookup();
+      } catch (error) {
+        warn(`Could not switch Main Pi to ${target}: ${error instanceof Error ? error.message : String(error)}. Parent is unchanged.`);
+        return;
+      }
+      if (!model) {
+        const detail = catalogNote ? ` ${catalogNote}` : "";
+        warn(`Could not switch Main Pi to ${target}; that model is not in Pi's registry. Parent is unchanged.${detail}`);
+        return;
+      }
+    } else if (!model) {
       warn(`Could not switch Main Pi to ${target}; that model is not in Pi's registry. Parent is unchanged.`);
       return;
     }

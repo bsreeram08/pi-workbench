@@ -514,6 +514,62 @@ describe("durable family defaults and customize menu", () => {
     }
   });
 
+  test("session start merges grok-4.7 into models.json and then switches Main Pi", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-workbench-grok-parent-"));
+    const modelsPath = join(root, "models.json");
+    writeFileSync(modelsPath, `${JSON.stringify({
+      providers: {
+        openrouter: { models: [{ id: "keep-me" }] },
+        xai: { baseUrl: "https://proxy.example/v1", apiKey: "$XAI_API_KEY", models: [{ id: "grok-4.6" }] },
+      },
+    })}\n`);
+    const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+    const parentModels: string[] = [];
+    const refreshed: unknown[] = [];
+    let visible = false;
+    const pi = {
+      registerCommand() {},
+      on(name: string, handler: (event: any, ctx: any) => unknown) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      appendEntry() {},
+      registerEntryRenderer() {},
+      setModel: async (model: { provider: string; id: string }) => {
+        parentModels.push(`${model.provider}/${model.id}`);
+        return true;
+      },
+      setThinkingLevel() {},
+    } as any;
+    registerModelRouting(pi, undefined, { modelsPath });
+    const ctx = {
+      cwd: root,
+      hasUI: false,
+      ui: { setStatus() {}, notify() {} },
+      sessionManager: { getBranch: () => [] },
+      modelRegistry: {
+        find(provider: string, id: string) {
+          return visible && provider === "xai" && id === "grok-4.7" ? { provider, id } : undefined;
+        },
+        async refresh(options: unknown) {
+          refreshed.push(options);
+          visible = true;
+        },
+      },
+    };
+    try {
+      await handlers.get("session_start")?.[0]?.({}, ctx);
+      expect(parentModels).toEqual(["xai/grok-4.7"]);
+      expect(refreshed).toEqual([{ allowNetwork: false, providers: ["xai"] }]);
+      const written = JSON.parse(readFileSync(modelsPath, "utf8"));
+      expect(written.providers.openrouter.models).toEqual([{ id: "keep-me" }]);
+      expect(written.providers.xai.baseUrl).toBe("https://proxy.example/v1");
+      expect(written.providers.xai.apiKey).toBe("$XAI_API_KEY");
+      expect(written.providers.xai.models.map((model: { id: string }) => model.id)).toEqual(["grok-4.6", "grok-4.7"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("notifies when the parent model cannot be applied", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-workbench-parent-miss-"));
     const notices: Array<{ message: string; level: string }> = [];
