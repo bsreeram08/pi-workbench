@@ -24,7 +24,7 @@ The corresponding bounded review call is:
 {
   "agent": "quality-reviewer",
   "task": "Review the proposed flight portfolio UI/UX. Inspect the resume data and plan, identify concrete usability issues, and recommend corrections.",
-  "model": "xai/grok-4.6:high",
+  "model": "xai/grok-4.7:high",
   "effort": "heavy"
 }
 ```
@@ -33,13 +33,13 @@ Use this with `delegate_task`. For native plan review, supply the same `model` a
 
 The model must exist in the session's available registry. Unknown or unavailable models produce a clear error before launch. There is no model substitution, and the call does not change session or project routing defaults. Model suffixes accept `low`, `medium`, or `high`; omitted thinking defaults to `medium`. `effort` controls the work budget independently. In parallel batches, set `model` on each requested `tasks[]` entry; every explicit model is checked before any child starts.
 
-During an approved workflow, use `workbench_execute` with `action: "implement"`, `planId`, a bounded `task`, and `model: "xai/grok-4.6:high"` (or another exact model the user asked for). This path requires an explicit model choice or a matching task preference and holds the writer lease. Each result returns to Main Pi for inspection. An override on one call does not rewrite later automatic lanes. `/start-work --pipeline` retains the automatic implementation/review/repair sequence for users who explicitly choose it.
+During an approved workflow, use `workbench_execute` with `action: "implement"`, `planId`, a bounded `task`, and `model: "xai/grok-4.7:high"` (or another exact model the user asked for, including `xai/grok-4.6`). This path requires an explicit model choice or a matching task preference and holds the writer lease. Each result returns to Main Pi for inspection. An override on one call does not rewrite later automatic lanes. `/start-work --pipeline` retains the automatic implementation/review/repair sequence for users who explicitly choose it.
 
 ## Verify the behavior
 
 1. Reload Workbench while idle. In a scratch project, run `/plan Build a small page with a keyboard-accessible navigation menu`.
 2. Confirm the activity row appears and Main Pi discusses decisions. Default planning should not immediately launch a mandatory Explorer/Planner chain.
-3. Ask for an explicit Grok UI/UX review. Inspect the route receipt: it should show `xai/grok-4.6` with the requested thinking level. If unavailable, expect an error and no substitute child.
+3. Ask for an explicit Grok UI/UX review. Inspect the route receipt: it should show `xai/grok-4.7` with the requested thinking level. If unavailable, expect an error and no substitute child.
 4. Submit the plan to native review. Rejections should return to Main Pi for correction. A passing review still requires your approval before `/start-work`.
 5. Check that the activity row updates during delegation and clears when work ends.
 6. Run `/start-work` and request Grok for UI implementation. Main Pi should describe the slice, call `workbench_execute` with that model, inspect the returned changes, and direct review. Completion requires native gates plus a separate Main Pi assessment; rejection must not silently launch another implementer. Isolated files belong in `./.worktrees/<name>` inside the project.
@@ -56,8 +56,8 @@ Main Pi records a scoped user request once using `workbench_model_policy`:
   "planId": "<current-plan-id>",
   "domain": "ui-ux",
   "actions": ["plan-review", "implement", "repair", "review"],
-  "model": "xai/grok-4.6:high",
-  "reason": "The user requested Grok 4.6 for UI/UX reviews and updates."
+  "model": "xai/grok-4.7:high",
+  "reason": "The user requested Grok 4.7 for UI/UX reviews and updates."
 }
 ```
 

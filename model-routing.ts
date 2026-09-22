@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
   BALANCED_ROUTES,
@@ -16,6 +16,7 @@ import {
   type RoutingFamily,
   type SessionRoutingDirective,
 } from "./routing.ts";
+import { mergeGrok47Model } from "./grok-catalog.ts";
 import { WORKBENCH_OPERATING_CONTRACT } from "./operating-contract.ts";
 import { findProjectRootSync } from "./project.ts";
 
@@ -85,7 +86,7 @@ function splitDefaultFlag(raw: string): { makeDefault: boolean; rest: string } {
 
 export const ROUTING_MENU_FAMILIES = [
   "Codex (Luna/Terra/Sol)",
-  "Grok 4.6 (low/medium/high)",
+  "Grok 4.7 (low/medium/high)",
 ] as const;
 export const ROUTING_MENU_POLICIES = ["Balanced", "Economy", "Quality"] as const;
 export const ROUTING_MENU_SCOPES = ["This session only", "Save as project default"] as const;
@@ -246,7 +247,7 @@ function stateDescription(state: ModelRoutingState): string {
     return `Fixed route for this session: \`${state.fixed.model}\` (${state.fixed.thinking}).${parentLine} Family and fixed routes move Main Pi and children together.`;
   }
   const family = routingFamily(state) === "grok"
-    ? " Grok 4.6 family: light/standard/heavy use xai/grok-4.6 at low/medium/high thinking."
+    ? " Grok 4.7 family: light/standard/heavy use xai/grok-4.7 at low/medium/high thinking. xai/grok-4.6 remains a valid explicit model."
     : " Codex family: Luna/low, Terra/medium, and Sol/high.";
   return `${state.policy[0].toUpperCase()}${state.policy.slice(1)} adaptive routing is active.${family}${parentLine} Persist with --default so new sessions in this project follow.`;
 }
@@ -260,14 +261,15 @@ function nativeRoutingGuidance(state: ModelRoutingState): string {
   const routes = family === "grok" ? GROK_BALANCED_ROUTES : BALANCED_ROUTES;
   const overrideNote = " Honor an explicit model=provider/model[:thinking] the user asked for on delegate_task, workbench_agent_start, or workbench_plan review. This overrides session defaults for that call only; unavailable exact models fail without substitution. Do not invent openai-codex/gpt-6-astra or any other model the user did not request. Effort controls the budget separately.";
   const familyNote = overrideNote + (family === "grok"
-    ? ` Grok 4.6 family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children; \`/model-routing grok --default\` writes the durable project family.`
-    : ` Codex family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children to Grok 4.6; \`--default\` persists the project family.`);
-  return `Adaptive delegation routing: prefer first-party delegate_task for ordinary specialist work and workbench_agent_start when a persistent read-only agent must remain steerable or may ask the parent a question. Classify each lane independently from complexity, uncertainty, risk, breadth, and verification cost; role is only a prior. Balanced routes are light=${routes.light.model}, standard=${routes.standard.model}, heavy=${routes.heavy.model}. A hard scout/recon lane can and should reach Sol or Grok 4.6 high; never use Spark for image/visual work. Before launch, show one compact line with role, model/thinking, reason, and read-only budget. Read-only limits are 8 turns/30 tools (light), 16/60 (standard), or 30/120 (heavy), with stop-and-synthesize guidance. Persistent mutation-capable agents are not enabled; use the existing single-writer delegate_task path under its lease. Do not use the external subagent tool or workflowScript; first-party Workbench agents are the runtime.${familyNote}${fixed}`;
+    ? ` Grok 4.7 family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children; \`/model-routing grok --default\` writes the durable project family. Pin \`xai/grok-4.6\` only when the user asks for that exact model.`
+    : ` Codex family is active. Main Pi is ${parent.provider}/${parent.id}:${parent.thinking}. \`/model-routing grok\` moves Main Pi and children to Grok 4.7; \`--default\` persists the project family.`);
+  return `Adaptive delegation routing: prefer first-party delegate_task for ordinary specialist work and workbench_agent_start when a persistent read-only agent must remain steerable or may ask the parent a question. Classify each lane independently from complexity, uncertainty, risk, breadth, and verification cost; role is only a prior. Balanced routes are light=${routes.light.model}, standard=${routes.standard.model}, heavy=${routes.heavy.model}. A hard scout/recon lane can and should reach Sol or Grok 4.7 high; never use Spark for image/visual work. Before launch, show one compact line with role, model/thinking, reason, and read-only budget. Read-only limits are 8 turns/30 tools (light), 16/60 (standard), or 30/120 (heavy), with stop-and-synthesize guidance. Persistent mutation-capable agents are not enabled; use the existing single-writer delegate_task path under its lease. Do not use the external subagent tool or workflowScript; first-party Workbench agents are the runtime.${familyNote}${fixed}`;
 }
 
 export function registerModelRouting(
   pi: ExtensionAPI,
   report?: (title: string, body: string) => void,
+  options?: { modelsPath?: string },
 ): ModelRoutingController {
   let state: ModelRoutingState = { policy: "balanced", family: "grok" };
   let durableDefaults: DurableRoutingDefaults = { policy: "balanced", family: "grok" };
@@ -292,20 +294,49 @@ export function registerModelRouting(
     updateStatus(ctx);
   };
 
+  const modelsJsonPath = (): string => options?.modelsPath ?? path.join(getAgentDir(), "models.json");
+
+  const installGrok47Catalog = async (ctx: ExtensionContext): Promise<string> => {
+    const merged = mergeGrok47Model(modelsJsonPath());
+    if (merged.status === "skipped") return merged.reason;
+    try {
+      await ctx.modelRegistry.refresh({ allowNetwork: false, providers: ["xai"] });
+    } catch {
+      return merged.status === "added"
+        ? "Workbench wrote grok-4.7 into models.json. Restart Pi if this process still does not list it."
+        : "models.json already lists grok-4.7. Restart Pi so this process reloads it.";
+    }
+    return "";
+  };
+
   const applyParentModel = async (ctx: ExtensionContext, next: ModelRoutingState): Promise<void> => {
     const route = parentRouteForState(next);
     const target = `${route.provider}/${route.id}`;
     const warn = (message: string): void => {
       if (ctx.hasUI) ctx.ui.notify(message, "warning");
     };
+    const lookup = (): unknown => ctx.modelRegistry.find(route.provider, route.id);
     let model: unknown;
     try {
-      model = ctx.modelRegistry.find(route.provider, route.id);
+      model = lookup();
     } catch (error) {
       warn(`Could not switch Main Pi to ${target}: ${error instanceof Error ? error.message : String(error)}. Parent is unchanged.`);
       return;
     }
-    if (!model) {
+    if (!model && route.provider === "xai" && route.id === "grok-4.7" && typeof ctx.modelRegistry.refresh === "function") {
+      const catalogNote = await installGrok47Catalog(ctx);
+      try {
+        model = lookup();
+      } catch (error) {
+        warn(`Could not switch Main Pi to ${target}: ${error instanceof Error ? error.message : String(error)}. Parent is unchanged.`);
+        return;
+      }
+      if (!model) {
+        const detail = catalogNote ? ` ${catalogNote}` : "";
+        warn(`Could not switch Main Pi to ${target}; that model is not in Pi's registry. Parent is unchanged.${detail}`);
+        return;
+      }
+    } else if (!model) {
       warn(`Could not switch Main Pi to ${target}; that model is not in Pi's registry. Parent is unchanged.`);
       return;
     }
