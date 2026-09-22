@@ -38,7 +38,7 @@ async function setup(review: (call: number) => string | string[] | Promise<strin
   const id = (await loadCurrentWorkflowPlan(workflowPaths))!.id;
   return {
     root, workflowPaths, id,
-    start: (request: string) => start(request, ctx),
+    start: (request: string, options?: { visual?: boolean }) => start(request, ctx, options),
     run: (action: string, extra: object = {}, signal?: AbortSignal) => tools.get("workbench_plan").execute("test", { action, planId: id, ...extra }, signal, undefined, ctx),
     reload: () => { for (const handler of handlers.get("session_start") ?? []) handler(); },
     state: () => loadCurrentWorkflowPlan(workflowPaths),
@@ -244,6 +244,18 @@ test("visual flag stores surface and strips it from the task", async () => {
     const state = (await item.state())!;
     expect(state.surface).toBe("visual");
     expect(state.task).toBe("Build a landing page");
+  } finally { await item.cleanup(); }
+});
+
+test("plan-ui forced visual uses the prompt as the task without a confirm box", async () => {
+  const item = await setup();
+  try {
+    const before = item.confirmations();
+    await item.start("rebuild the settings page", { visual: true });
+    const state = (await item.state())!;
+    expect(state.surface).toBe("visual");
+    expect(state.task).toBe("rebuild the settings page");
+    expect(item.confirmations()).toBe(before);
   } finally { await item.cleanup(); }
 });
 

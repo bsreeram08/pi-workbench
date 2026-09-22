@@ -84,7 +84,7 @@ bun install --frozen-lockfile
 ./install.sh --strict
 ```
 
-After install, start Pi or `/reload`.
+After install, start Pi or `/reload`. New sessions print a short Coordinator blurb. `/help` lists Workbench commands; `/help all` lists every slash command Pi discovered in this session.
 
 Use the same `PI_CODING_AGENT_DIR` when installing and launching Pi. The installer prints the destination and source checkout. `--full` enables the π SREE header and configures trusted skill sources; it does not copy the author's personal skill library or download skills. Run `/skills-evolve` for the configured sources. Running the installer again installs the current checkout; it does not fetch newer Git commits.
 
@@ -126,6 +126,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 
 | Command | Purpose |
 |---|---|
+| `/help [topic\|all]` | How Workbench works and every command. `/help plan`, `/help visual`, `/help all`. Aliases: `/commands`, `/workbench` |
 | `/delegate [agent task]` | Roster, or run one specialist (`delegate_task` under the hood) |
 | `/model-routing` | Family/policy menu for Main Pi and children; `grok`/`codex`/`balanced`/`economy`/`quality`; `--default` persists |
 | `/todos` | Show the first-party session todo list |
@@ -133,7 +134,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/goals-set <objective>` | Create or replace the goal. The agent does not create goals |
 | `/goals-clear` | Remove the goal file |
 | `/plan [task]` | Clarify, plan, and independently review acceptance criteria |
-| `/plan --visual [task]` | Same, as a visual plan (taste lock + host loopback capture). `--ui` is an alias |
+| `/plan-ui [task]` | Plan UI work (taste lock + host loopback capture). Remainder is the task |
 | `/plan --pipeline [task]` | Use the automatic discovery/planner/reviewer sequence |
 | `/plan --revise [feedback]` | Replan from the current task and draft before implementation starts |
 | `/start-work` | Implement, independently review, repair, and verify the approved plan |
@@ -142,6 +143,7 @@ After the run, `/workflow-status` shows the state and evidence paths. Inspect `c
 | `/review --root <git-toplevel> [focus]` | Same review in another checkout without starting a second Pi |
 | `/qmd` | Open a localhost QMD catalog (collections, files, search, preview) |
 | `/autopilot [task]` | Plan, implement, review, and verify in one run |
+| `/autopilot-ui [task]` | Same, as a visual plan |
 | `/automode [on\|off\|status]` | Keep this Coordinator session moving with conservative defaults |
 | `/spawn [always\|ask\|never\|auto]` | When Main Pi may spawn specialists. `fanout N` caps parallel lanes; `this always` is this session only |
 | `/workflow-status` | Current plan state and evidence paths |

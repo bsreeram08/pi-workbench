@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/help` (aliases `/commands`, `/workbench`) lists Workbench commands by job. `/help all` lists every slash command Pi discovered this session. New sessions get a short Coordinator blurb; Main Pi is taught the `/plan` → `/start-work` loop (and `/plan-ui`) so it can explain the workbench without the README.
+- `/plan-ui <task>` is the visual loop: required taste lock (`references`, `refusals`), packet `runtime-observation` and `artifact-inspection`, inverted style review, and host-captured loopback screenshots. Caller-supplied PNGs cannot complete visual plans. Interactive `/plan` asks before entering that loop when the task looks like UI work. `/plan --visual` remains a compatibility flag.
 - Grok family and the installer default are `xai/grok-4.7` at high thinking. Children still use low/medium/high on that model. `xai/grok-4.6` remains a valid explicit pin.
 - When Pi's catalog has no `xai/grok-4.7`, Workbench merges that model into `models.json` and reloads the xAI provider so Main Pi can switch. Other models and any API key stay untouched. A symlink or invalid `models.json` is left unchanged.
 - `/plan --visual` (alias `--ui`) is a plan-scoped visual loop: required taste lock (`references`, `refusals`), packet `runtime-observation` and `artifact-inspection`, inverted style review, and host-captured loopback screenshots. Caller-supplied PNGs cannot complete visual plans. Interactive `/plan` asks before entering that loop when the task looks like UI work.
